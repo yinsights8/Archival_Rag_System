@@ -11,6 +11,7 @@ dependencies = [
     "langchain>=1.2.10",
     "langchain-community>=0.4.1",
     "langchain-huggingface>=1.2.0",
+    "langchain-openai>=1.1.10",
     "numpy>=2.4.2",
     "orjson>=3.11.7",
     "pypdf>=6.7.5",
