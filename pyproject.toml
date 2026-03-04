@@ -16,6 +16,7 @@ dependencies = [
     "orjson>=3.11.7",
     "pypdf>=6.7.5",
     "python-dotenv>=1.2.2",
+    "rank-bm25>=0.2.2",
     "sentence-transformers>=5.2.3",
     "tqdm>=4.67.3",
     "uvicorn>=0.41.0",

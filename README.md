@@ -36,7 +36,13 @@ Get your API key from [openrouter.ai/keys](https://openrouter.ai/keys).
 ### 3. Run the Server
 
 ```bash
-uvicorn main:app --reload
+
+terminal 1:
+uv run uvicorn main_jsonl_chat:app
+
+terminal 2:
+npx inngest-cli@latest dev -u http://127.0.0.1:8000/api/inngest --no-discovery
+
 ```
 
 The API will be available at `http://localhost:8000`.

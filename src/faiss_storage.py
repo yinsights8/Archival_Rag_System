@@ -5,6 +5,7 @@ import numpy as np
 import orjson
 
 
+
 class FaissStorage:
     """
     FaissStorage is a storage class that uses Faiss to store and 

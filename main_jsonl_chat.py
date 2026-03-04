@@ -90,28 +90,51 @@ async def rag_ingest_nls_corpus(ctx: inngest.Context) -> str:
     trigger=inngest.TriggerEvent(event="app/rag_query_nls_corpus")
 )
 async def rag_query_nls_corpus(ctx: inngest.Context) -> str:
-    def _search(question: str, top_k: int = 5) -> RAGSearchResult:
-        query_vec = embed_texts([question])[0]  # 1. convert the question into vector
-        store = FaissStorage()
-        found = store.search(query_vec, top_k)  # 2. search the top_k most similar vectors
+    from src.retrievers import DenseRetriever, SparseRetriever, HybridRetriever
+    from src.custom_types import RAGSearchResult
 
+    question = ctx.event.data["question"]
+    top_k = int(ctx.event.data.get("top_k", 5))
+    retrieval_mode = ctx.event.data.get("retrieval_mode", "hybrid")  # "dense" | "sparse" | "hybrid"
+
+    store = FaissStorage()
+
+    # ── Step 1: Dense retrieval (FAISS vector search) ──────────────────────────
+    def _dense_search() -> dict:
+        return DenseRetriever(store).search(question, top_k=top_k)
+
+    dense_result = await ctx.step.run("retrieval-dense", _dense_search)
+
+    # ── Step 2: Sparse retrieval (BM25 keyword search) ─────────────────────────
+    def _sparse_search() -> dict:
+        return SparseRetriever(store).search(question, top_k=top_k)
+
+    sparse_result = await ctx.step.run("retrieval-sparse", _sparse_search)
+
+    # ── Step 3: Hybrid merge (Reciprocal Rank Fusion) ──────────────────────────
+    def _hybrid_merge() -> RAGSearchResult:
+        if retrieval_mode == "dense":
+            found = dense_result
+        elif retrieval_mode == "sparse":
+            found = sparse_result
+        else:
+            found = HybridRetriever(store).search(question, top_k=top_k)
         return RAGSearchResult(
             contexts=found["contexts"],
             sources=found["sources"],
-            metadatas=found["metadatas"]
+            metadatas=found["metadatas"],
         )
-        
-    question = ctx.event.data["question"]   # get the question from inngest frontend
-    top_k = int(ctx.event.data.get("top_k", 5))  # get the top_k from inngest frontend
 
-    found = await ctx.step.run("embed-and-search", lambda: _search(question, top_k), output_type=RAGSearchResult)
+    found = await ctx.step.run("retrieval-hybrid-merge", _hybrid_merge, output_type=RAGSearchResult)
 
-    # Build a single context string from retrieved chunks
+
+
+
+
+    # ── Step 4: LLM answer generation ──────────────────────────────────────────
     context_text = "\n\n".join(f"- {c}" for c in found.contexts)
 
-    # Define the LLM chain
     llm = get_client()
-    
     prompt = ChatPromptTemplate.from_template(
         """
         Answer the question based on the context provided.
@@ -126,7 +149,6 @@ async def rag_query_nls_corpus(ctx: inngest.Context) -> str:
     output_parser = StrOutputParser()
     chain = prompt | llm | output_parser
 
-    # Generate and track this as an Inngest step
     answer = await ctx.step.run(
         "llm-answer",
         lambda: chain.invoke({"context": context_text, "question": question}),
