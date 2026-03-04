@@ -144,6 +144,7 @@ async def rag_query_nls_corpus(ctx: inngest.Context) -> str:
         Context: {context}
         
         Answer:
+        Sources: {sources}
         """
     )
     output_parser = StrOutputParser()

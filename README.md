@@ -89,7 +89,6 @@ Open the Inngest UI at `http://localhost:8288` to trigger and monitor events.
 
 ```json
 {
-  "name": "app/rag_ingest_nls_corpus",
   "data": {
     "jsonl_path": "data/corpus2.jsonl",
     "source_id": "nls-corpus-v2"
@@ -101,7 +100,6 @@ Open the Inngest UI at `http://localhost:8288` to trigger and monitor events.
 
 ```json
 {
-  "name": "app/rag_query_nls_corpus",
   "data": {
     "question": "Who fought at the Battle of Bara?",
     "top_k": 5,
@@ -129,24 +127,6 @@ Each query run is broken into 4 tracked steps:
 | 2 | `retrieval-sparse` | BM25 keyword search (cached index) |
 | 3 | `retrieval-hybrid-merge` | RRF fusion of both results |
 | 4 | `llm-answer` | LLM answer generation |
-
-## Evaluation
-
-Use `src/evaluation.py` to benchmark retrieval quality against ground-truth relevance judgements (`qrels`):
-
-```python
-from src.evaluation import batch_retriever_to_results, compute_stratified_metrics
-from src.retrievers import HybridRetriever
-
-queries = {"q1": "battles in Kordofan", "q2": "Mahdi uprising"}
-qrels   = {"q1": {"doc_001": 1}, "q2": {"doc_007": 2}}
-query_metadata = {"q1": {"ocr_quality_tier": "low"}, "q2": {"ocr_quality_tier": "high"}}
-
-results = batch_retriever_to_results(queries, HybridRetriever(), top_k=10)
-report  = compute_stratified_metrics(results, qrels, query_metadata)
-```
-
-**Available metrics:** nDCG@k, MRR, Recall@k — overall and stratified by OCR quality tier (`high` / `medium` / `low`).
 
 ## Configuration
 
