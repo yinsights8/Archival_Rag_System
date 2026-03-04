@@ -69,8 +69,8 @@ def build_payloads(rec: Dict[str, Any], chunks: List[str]) -> List[Dict[str, Any
     collection = str(rec.get("collection", ""))
     source_dir = str(rec.get("source_dir", ""))
 
-    # Your earlier logic: show source_dir or doc_id as citation/source.
-    # Here we also respect the Inngest-level source_id as a stable fallback.
+
+    # Inngest-level source_id as a stable fallback.
     # citation_source = source_dir or doc_id or source_id
 
     payloads: List[Dict[str, Any]] = []
@@ -131,7 +131,6 @@ def load_and_chunk_jsonl(
                 if float(oq) < float(min_ocr_quality):
                     continue
             except Exception:
-                # If it's not parseable, don't filter it out silently
                 pass
 
         text = rec.get("text", "")
