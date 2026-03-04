@@ -2,7 +2,7 @@ import logging
 from fastapi import FastAPI
 import inngest
 import inngest.fast_api
-from src.ingest_pdf import load_and_chunk_pdf, embed_texts
+from src.ingest_corpus_jsonl import load_and_chunk_jsonl, embed_texts
 from src.custom_types import RAGChunkAndSrc, RAGUpsertResult, RAGSearchResult, RAQQueryResult
 from src.faiss_storage import FaissStorage
 import uuid
@@ -53,40 +53,43 @@ inngest_client = inngest.Inngest(
 
 # Create an Inngest function
 @inngest_client.create_function(
-    fn_id="rag ingest jsonl",
+    fn_id="RAG: Ingest NLS Corpus",
     # Event that triggers this function
-    trigger=inngest.TriggerEvent(event="app/rag ingest jsonl"),
+    trigger=inngest.TriggerEvent(event="app/rag_ingest_nls_corpus"),
 )
-async def rag_ingest_pdf(ctx: inngest.Context) -> str:
-    # Step 1: load the pdf file from the path and chunk it
-    def _load(ctx: inngest.Context) -> RAGChunkAndSrc:
-        pdf_path = ctx.event.data["pdf_path"]
-        source_id = ctx.event.data.get("source_id", pdf_path)
-        chunks = load_and_chunk_pdf(pdf_path)
-        return RAGChunkAndSrc(chunks=chunks, source_id=source_id)
+async def rag_ingest_nls_corpus(ctx: inngest.Context) -> str:
+    # Step 1 & 2: load the jsonl file, chunk the text, and store it into the vec store
+    def _process_corpus(ctx: inngest.Context) -> RAGUpsertResult:
+        jsonl_path = ctx.event.data["jsonl_path"]
+        source_id = ctx.event.data.get("source_id", jsonl_path)
+
+        # Stream records, clean, chunk per record (keep metadata!)
+        chunks = load_and_chunk_jsonl(jsonl_path)
         
-    
-    # Step 2: chunk the text and store it into the vec store
-    def _upsert(chunk_and_src: RAGChunkAndSrc) -> RAGUpsertResult:
-        chunks = chunk_and_src.chunks
-        source_id = chunk_and_src.source_id
-        vecs = embed_texts(chunks)
+        texts = [c["text"] for c in chunks]
+        vecs = embed_texts(texts)
         ids = [str(uuid.uuid5(uuid.NAMESPACE_URL, f"{source_id}:{i}")) for i in range(len(chunks))]
-        payloads = [{"source": source_id, "text": chunks[i]} for i in range(len(chunks))]
+        
+        payloads = []
+        for i, c in enumerate(chunks):
+            payload = {"source": source_id, "text": c["text"]}
+            payload.update(c.get("metadata", {}))
+            payloads.append(payload)
+            
         FaissStorage().upsert(ids, vecs, payloads)
         return RAGUpsertResult(ingested=len(chunks))
         
-    chunk_and_src = await ctx.step.run("load-and-chunk", lambda: _load(ctx), output_type=RAGChunkAndSrc)
-    upsert_result = await ctx.step.run("upsert", lambda: _upsert(chunk_and_src), output_type=RAGUpsertResult)
+    upsert_result = await ctx.step.run("process-corpus", lambda: _process_corpus(ctx), output_type=RAGUpsertResult)
     return upsert_result.model_dump_json()
+    # return chunk_and_src
 
 
 @inngest_client.create_function(
-    fn_id="RAG: Query PDF",
+    fn_id="RAG: Query NLS Corpus",
     # Event that triggers this function
-    trigger=inngest.TriggerEvent(event="app/rag_query_pdf")
+    trigger=inngest.TriggerEvent(event="app/rag_query_nls_corpus")
 )
-async def rag_query_pdf(ctx: inngest.Context) -> str:
+async def rag_query_nls_corpus(ctx: inngest.Context) -> str:
     def _search(question: str, top_k: int = 5) -> RAGSearchResult:
         query_vec = embed_texts([question])[0]  # 1. convert the question into vector
         store = FaissStorage()
@@ -135,7 +138,7 @@ async def rag_query_pdf(ctx: inngest.Context) -> str:
         num_contexts=len(found.contexts)
     ).model_dump_json()
 
-app = FastAPI()
+app = FastAPI(port=8000)
 
 # Serve the Inngest endpoint
-inngest.fast_api.serve(app, inngest_client, [rag_ingest_pdf, rag_query_pdf])
+inngest.fast_api.serve(app, inngest_client, [rag_ingest_nls_corpus, rag_query_nls_corpus])

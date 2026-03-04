@@ -2,7 +2,7 @@ import pydantic
 
 
 class RAGChunkAndSrc(pydantic.BaseModel):
-    chunks: list[str]
+    chunks: list[dict]
     source_id: str = None
 
 
