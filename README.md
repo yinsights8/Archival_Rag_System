@@ -33,11 +33,9 @@ Each stage is tracked as a **named Inngest step**, visible individually in the I
 ├── main_jsonl_chat.py          # FastAPI + Inngest functions (ingest & query)
 ├── src/
 │   ├── retrievers.py           # DenseRetriever, SparseRetriever, HybridRetriever
-│   ├── evaluation.py           # nDCG, MRR, Recall, stratified metrics, significance tests
 │   ├── ingest_corpus_jsonl.py  # JSONL streaming, chunking, embeddings
 │   ├── faiss_storage.py        # FAISS vector store (persistent, disk-backed)
 │   ├── generation.py           # LLM call helpers
-│   ├── bm25_retriever.py       # Low-level BM25 utilities
 │   └── custom_types.py         # Pydantic models
 ├── data/
 │   └── corpus2.jsonl           # Archival document corpus
