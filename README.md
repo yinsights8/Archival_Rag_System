@@ -2,6 +2,68 @@
 
 A Retrieval-Augmented Generation (RAG) system for ingesting archival document corpora (JSONL format) and querying them with a hybrid retrieval pipeline backed by an LLM.
 
+
+## Corpus Statistics
+
+> **397 documents** spanning **638 years** (1299–1937) across **2 collections**.
+
+### Collections
+
+| Collection | Documents |
+|---|---|
+| `africa_and_new_imperialism` | 238 (59.9%) |
+| `indiaraj` | 159 (40.1%) |
+
+### OCR Quality
+
+| Tier | Count | Share |
+|---|---|---|
+| 🟢 High (≥ 0.9) | 191 | 48.1% |
+| 🟡 Medium (0.7–0.9) | 136 | 34.3% |
+| 🔴 Low (< 0.7) | 70 | 17.6% |
+
+Estimated OCR confidence scores: **mean 0.967**, median 0.979, std 0.038, range 0.606–0.996.
+
+### Document Length (words)
+
+| Statistic | Value |
+|---|---|
+| Mean | 38,859 |
+| Median | 22,078 |
+| Min / Max | 22 / 560,676 |
+| P25 / P75 | 4,543 / 51,924 |
+| P90 / P95 / P99 | 90,024 / 121,374 / 311,350 |
+
+
+### Temporal Distribution
+
+Documents span **19 decades** with the following concentrations:
+
+| Period | Documents |
+|---|---|
+| Medieval (1290s–1310s) | 14 |
+| Late 18th century (1760s–1790s) | 102 |
+| 19th century (1800s–1890s) | 262 |
+| Early 20th century (1920s–1930s) | 4 |
+| **Peak decade** | 1860s (81 docs) |
+
+## Total Number of Chunks
+
+> **121,722 chunks** stored across all indexes (verified 2026-03-05).
+
+### Storage Files
+
+| File | Size | Purpose |
+|---|---|---|
+| `storage/ids.json` | ~4.7 MB | List of all 121,722 chunk IDs |
+| `storage/docstore.jsonl` | ~154 MB | One chunk (text + metadata) per line — 121,722 lines |
+| `storage/faiss.index` | ~187 MB | Dense FAISS vector index over all chunks |
+| `storage/bm25_index.pkl` | ~139 MB | BM25 sparse index over all chunks |
+
+**Total storage footprint: ~485 MB**
+
+> All four storage artifacts are in sync at **121,722 chunks**.
+
 ## What This Project Does
 
 The system allows you to:
