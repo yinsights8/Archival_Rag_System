@@ -139,7 +139,7 @@ def load_and_chunk_jsonl(
 
         # Chunk with boundaries when possible
         chunks = splitter.split_text(text)
-        # Enforce minimum chunk size like your previous code
+        # Enforce minimum chunk size
         chunks = [p.strip() for p in chunks if len(p.strip()) >= min_chars]
         if not chunks:
             continue
