@@ -3,42 +3,19 @@ from fastapi import FastAPI
 import inngest
 import inngest.fast_api
 from src.ingest_corpus_jsonl import load_and_chunk_jsonl, embed_texts
-from src.custom_types import RAGChunkAndSrc, RAGUpsertResult, RAGSearchResult, RAQQueryResult
+from src.custom_types import RAGChunkAndSrc, RAGUpsertResult, RAGSearchResult, RAQQueryResult, RAGEvalResult
 from src.faiss_storage import FaissStorage
+from src.generation import RAGGenerator
 import uuid
 import os
 
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
 from dotenv import load_dotenv
 
 
 load_dotenv()
 
 
-# OpenRouter setup
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# Default model for query generation
-DEFAULT_MODEL = "meta-llama/llama-3.1-70b-instruct"
-
-
-
-# define the model 
-def get_client() -> ChatOpenAI:
-    """Create OpenRouter client."""
-    if not OPENROUTER_API_KEY or OPENROUTER_API_KEY == "your_key_here":
-        raise ValueError(
-            "OPENROUTER_API_KEY not set. Add it to .env file.\n"
-            "Get a key at https://openrouter.ai/keys"
-        )
-    return ChatOpenAI(
-        model=DEFAULT_MODEL,
-        openai_api_base=OPENROUTER_BASE_URL,
-        openai_api_key=OPENROUTER_API_KEY,
-    )
 
 
 # Create an Inngest client
@@ -128,31 +105,12 @@ async def rag_query_nls_corpus(ctx: inngest.Context) -> str:
     found = await ctx.step.run("retrieval-hybrid-merge", _hybrid_merge, output_type=RAGSearchResult)
 
 
-
-
-
     # ── Step 4: LLM answer generation ──────────────────────────────────────────
-    context_text = "\n\n".join(f"- {c}" for c in found.contexts)
-
-    llm = get_client()
-    prompt = ChatPromptTemplate.from_template(
-        """
-        Answer the question based on the context provided.
-        If the answer is not in the context, say "I don't know".
-        
-        Question: {question}
-        Context: {context}
-        
-        Answer:
-        Sources: {sources}
-        """
-    )
-    output_parser = StrOutputParser()
-    chain = prompt | llm | output_parser
+    generator = RAGGenerator()
 
     answer = await ctx.step.run(
         "llm-answer",
-        lambda: chain.invoke({"context": context_text, "question": question}),
+        lambda: generator.generate(question, found.contexts, found.sources),
     )
 
     return RAQQueryResult(
@@ -161,7 +119,48 @@ async def rag_query_nls_corpus(ctx: inngest.Context) -> str:
         num_contexts=len(found.contexts)
     ).model_dump_json()
 
+@inngest_client.create_function(
+    fn_id="RAG: Evaluate NLS Corpus",
+    trigger=inngest.TriggerEvent(event="app/rag_evaluate_nls_corpus")
+)
+async def rag_evaluate_nls_corpus(ctx: inngest.Context) -> str:
+    from evaluation.evaluate import RAGEvaluator, QAPair
+    from src.custom_types import RAGEvalResult
+
+    eval_data = ctx.event.data["eval_data"]
+    top_k = int(ctx.event.data.get("top_k", 5))
+    run_generation = ctx.event.data.get("run_generation", False)
+
+    dataset = []
+    for item in eval_data:
+        dataset.append(QAPair(
+            query=item["query"],
+            ground_truth_answer=item.get("ground_truth_answer", ""),
+            ground_truth_contexts=item.get("ground_truth_contexts", []),
+            ground_truth_doc_ids=item.get("ground_truth_doc_ids", [])
+        ))
+
+    def _evaluate() -> dict:
+        evaluator = RAGEvaluator()
+        retriever_results = evaluator.evaluate_retrievers(dataset, top_k=top_k)
+        
+        generator_results = {}
+        if run_generation:
+            generator_results = evaluator.evaluate_generation_with_ragas(dataset, top_k=top_k)
+            
+        return {
+            "retriever_metrics": retriever_results,
+            "generator_metrics": generator_results
+        }
+    
+    eval_result = await ctx.step.run("evaluate-corpus", _evaluate)
+    
+    return RAGEvalResult(
+        retriever_metrics=eval_result["retriever_metrics"],
+        generator_metrics=eval_result["generator_metrics"]
+    ).model_dump_json()
+
 app = FastAPI(port=8000)
 
 # Serve the Inngest endpoint
-inngest.fast_api.serve(app, inngest_client, [rag_ingest_nls_corpus, rag_query_nls_corpus])
+inngest.fast_api.serve(app, inngest_client, [rag_ingest_nls_corpus, rag_query_nls_corpus, rag_evaluate_nls_corpus])

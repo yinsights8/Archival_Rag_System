@@ -19,3 +19,7 @@ class RAQQueryResult(pydantic.BaseModel):
     answer: str
     sources: list[str]
     num_contexts: int
+
+class RAGEvalResult(pydantic.BaseModel):
+    retriever_metrics: dict
+    generator_metrics: dict = {}
