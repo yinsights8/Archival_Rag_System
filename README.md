@@ -69,7 +69,8 @@ Documents span **19 decades** with the following concentrations:
 The system allows you to:
 1. **Ingest archival corpora** — Stream `.jsonl` files, chunk documents, embed with BGE, and store in a FAISS vector index
 2. **Retrieve documents** — Three retrieval modes: Dense (semantic), Sparse (BM25 keyword), and Hybrid (RRF fusion)
-3. **Query with an LLM** — Retrieved context is passed to LLaMA 3.1 70B to generate an answer
+3. **Query with an LLM** — Retrieved context is passed to LLaMA 3.1 70B via OpenRouter to generate answers.
+4. **Evaluate Performance** — A dedicated evaluation suite to measure retriever accuracy and LLM answer quality.
 
 
 ## Architecture
@@ -83,8 +84,34 @@ User Query
     │
     └─► Hybrid Retriever     (Reciprocal Rank Fusion of Dense + Sparse)
             │
+            ├─► [Optional] Compressor (RECOMP) → Improves context efficiency
+            │
             └─► LLM (LLaMA 3.1 70B via OpenRouter) → Answer
 ```
+
+## Evaluation Framework
+
+The project includes a robust evaluation module to measure both search and generation quality.
+
+### Supported Metrics
+- **Retriever Metrics**:
+  - **MRR** (Mean Reciprocal Rank): Measures rank quality of the first correct document.
+  - **Recall@K**: Measures if the ground truth document is within the top $K$ results.
+  - **nDCG**: Measures ranking efficiency and position sensitivity.
+- **Generation Metrics (Ragas)**:
+  - **Faithfulness**: Is the answer derived solely from the provided context?
+  - **Answer Relevancy**: Does the answer directly address the user query?
+  - **Context Precision/Recall**: Quality and completeness of the retrieved context.
+
+### Running Evaluation
+To run a full evaluation on the `rag_questions.json` dataset:
+```bash
+python evaluation/evaluate.py
+```
+
+### Evaluation Artifacts
+- **Detailed Dataset**: `data/rag_dataset/rag_dataset.csv` — Inspect every query, context, and generated answer.
+- **Summary Report**: `results/evaluation_results_[timestamp].json` — Quantitative summary of all scores.
 
 Each stage is tracked as a **named Inngest step**, visible individually in the Inngest dashboard.
 
@@ -93,19 +120,22 @@ Each stage is tracked as a **named Inngest step**, visible individually in the I
 ```
 .
 ├── main_jsonl_chat.py          # FastAPI + Inngest functions (ingest & query)
+├── evaluation/
+│   ├── evaluate.py             # Main evaluation entry point
+│   ├── metrics.py              # Mathematical IR metric implementations
+│   └── trigger_evaluation.py   # Inngest trigger for async evaluation
 ├── src/
 │   ├── retrievers.py           # DenseRetriever, SparseRetriever, HybridRetriever
 │   ├── ingest_corpus_jsonl.py  # JSONL streaming, chunking, embeddings
 │   ├── faiss_storage.py        # FAISS vector store (persistent, disk-backed)
 │   ├── generation.py           # LLM call helpers
 │   └── custom_types.py         # Pydantic models
+    └── compressor.py           # [Planned] RECOMP context compression
 ├── data/
-│   └── corpus2.jsonl           # Archival document corpus
-├── storage/
-│   ├── faiss.index             # FAISS index (auto-created on ingest)
-│   ├── docstore.jsonl          # Chunk payloads with metadata
-│   ├── ids.json                # Vector IDs
-│   └── bm25_index.pkl          # Cached BM25 index (auto-created on first query)
+│   ├── corpus2.jsonl           # Archival document corpus
+│   └── rag_dataset/            # Exported evaluation datasets (CSV)
+├── results/                    # Exported evaluation summary reports (JSON)
+├── storage/                    # Persistent index storage (FAISS, BM25)
 └── pyproject.toml
 ```
 
