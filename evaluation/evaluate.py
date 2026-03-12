@@ -27,7 +27,8 @@ class RAGEvaluator:
             self.store = FaissStorage(dir_path=faiss_store_path)
         else:
             self.store = FaissStorage()
-            
+        
+        # three retrivers to try the results.
         self.dense = DenseRetriever(self.store)
         self.sparse = SparseRetriever(self.store)
         self.hybrid = HybridRetriever(self.store)
@@ -58,7 +59,7 @@ class RAGEvaluator:
             return results
             
         for qa in dataset:
-            # 1. Fetch from Retrievers
+            # 1. Fetch documents from Retrievers
             dense_res = self.dense.search(qa.query, top_k=top_k)
             sparse_res = self.sparse.search(qa.query, top_k=top_k)
             hybrid_res = self.hybrid.search(qa.query, top_k=top_k)
@@ -81,7 +82,7 @@ class RAGEvaluator:
             
             # 3. Calculate metrics for each retriever
             for name, r_ids in [("dense", dense_ids), ("sparse", sparse_ids), ("hybrid", hybrid_ids)]:
-                # It's better to match by document ID to handle exact matches
+                # match by document ID to handle exact matches
                 results[name]["mrr"] += calculate_mrr(qa.ground_truth_doc_ids, r_ids)
                 results[name][f"recall@{top_k}"] += calculate_recall_at_k(qa.ground_truth_doc_ids, r_ids, top_k)
                 results[name][f"ndcg@{top_k}"] += calculate_ndcg(qa.ground_truth_doc_ids, r_ids, top_k)
@@ -101,9 +102,6 @@ class RAGEvaluator:
         """
         try:
             from ragas import evaluate
-            # Note: Importing from top-level ragas.metrics is deprecated in 0.4.x but 
-            # importing from collections causes TypeError in evaluate() as metrics 
-            # are not recognized as Metric instances in 0.4.3.
             from ragas.metrics import (
                 Faithfulness,
                 AnswerRelevancy,
@@ -274,9 +272,6 @@ if __name__ == "__main__":
             ragas_results = evaluator.evaluate_generation_with_ragas(eval_data, top_k=5)
             print("Ragas Results:", ragas_results)
             
-            # handle both EvaluationResult object and dictionary
-            # Ragas 0.4.x has summarized scores in _scores_dict (repr shows this)
-            # result.scores is a list of per-row scores, which caused the crash
             if hasattr(ragas_results, "_scores_dict"):
                 scores_dict = ragas_results._scores_dict
             elif hasattr(ragas_results, "items"):
