@@ -19,6 +19,7 @@ venv.bak/
 # Local data & storage
 data/
 storage/
+planning/
 
 # IDE / Editor
 .vscode/

@@ -42,6 +42,18 @@ class RAGEvaluator:
             "hybrid": {"mrr": 0.0, f"recall@{top_k}": 0.0, f"ndcg@{top_k}": 0.0},
         }
         
+        # Save the evaluation dataset to disk
+        import json as _json
+        os.makedirs("data/queries", exist_ok=True)
+        with open("data/queries/rag_questions_eval.json", "w", encoding="utf-8") as f:
+            _json.dump(
+                [{"query": qa.query, "ground_truth_answer": qa.ground_truth_answer,
+                  "ground_truth_contexts": qa.ground_truth_contexts,
+                  "ground_truth_doc_ids": qa.ground_truth_doc_ids} for qa in dataset],
+                f, indent=2, ensure_ascii=False
+            )
+        print(f"Saved evaluation dataset to data/queries/rag_questions_eval.json")
+
         if not dataset:
             return results
             
@@ -64,8 +76,8 @@ class RAGEvaluator:
             sparse_ids = extract_doc_ids(sparse_res)
             hybrid_ids = extract_doc_ids(hybrid_res)
             
-            print(f"DEBUG - Ground Truth IDs: {qa.ground_truth_doc_ids}")
-            print(f"DEBUG - Dense Retrieved: {dense_ids}")
+            # print(f"DEBUG - Ground Truth IDs: {qa.ground_truth_doc_ids}")
+            # print(f"DEBUG - Dense Retrieved: {dense_ids}")
             
             # 3. Calculate metrics for each retriever
             for name, r_ids in [("dense", dense_ids), ("sparse", sparse_ids), ("hybrid", hybrid_ids)]:
@@ -89,7 +101,10 @@ class RAGEvaluator:
         """
         try:
             from ragas import evaluate
-            from ragas.metrics.collections import (
+            # Note: Importing from top-level ragas.metrics is deprecated in 0.4.x but 
+            # importing from collections causes TypeError in evaluate() as metrics 
+            # are not recognized as Metric instances in 0.4.3.
+            from ragas.metrics import (
                 Faithfulness,
                 AnswerRelevancy,
                 ContextPrecision,
@@ -118,6 +133,11 @@ class RAGEvaluator:
             client=openai_client,
         )
         ragas_embeddings = RagasHFEmbeddings(model="BAAI/bge-small-en-v1.5")
+        # Monkey-patch missing Langchain-style methods that Ragas metrics expect
+        if not hasattr(ragas_embeddings, "embed_query"):
+            ragas_embeddings.embed_query = ragas_embeddings.embed_text
+        if not hasattr(ragas_embeddings, "embed_documents"):
+            ragas_embeddings.embed_documents = ragas_embeddings.embed_texts
             
         retriever_map = {
             "dense": self.dense,
@@ -163,7 +183,16 @@ class RAGEvaluator:
             "ground_truth": ground_truths
         }
         
+
         ragas_dataset = Dataset.from_dict(data)
+        # Save the dataset to disk
+        os.makedirs("data/rag_dataset", exist_ok=True)
+        ragas_dataset.save_to_disk("data/rag_dataset")
+        # Save as CSV for easier inspection
+        ragas_dataset.to_csv("data/rag_dataset/rag_dataset.csv")
+        print("Saved Ragas evaluation dataset to data/rag_dataset/rag_dataset.csv")
+
+
         
         print("Running Ragas metrics...")
         result = evaluate(
@@ -183,6 +212,8 @@ class RAGEvaluator:
 if __name__ == "__main__":
     import json
     import argparse
+    from datetime import datetime
+    
     print("--- Running Evaluation on JSON dataset ---")
     
     parser = argparse.ArgumentParser(description="Run evaluation testing.")
@@ -215,21 +246,63 @@ if __name__ == "__main__":
     
     evaluator = RAGEvaluator()
     
+    # Store all results for export
+    all_results = {
+        "timestamp": datetime.now().isoformat(),
+        "queries_file": args.queries_file,
+        "num_questions": len(eval_data),
+        "retriever_evaluation": {},
+        "generation_evaluation": {}
+    }
+    
     # Check if docstore exists, if not, skip
     if not os.path.exists(evaluator.store.docstore_path):
          print("Warning: Index/Docstore not found. Please ingest data before running the evaluation. Skipping evaluation logic.")
     else:
         print("\n1. Evaluating Retrievers...")
         retriever_results = evaluator.evaluate_retrievers(eval_data, top_k=5)
+        all_results["retriever_evaluation"] = retriever_results
+        
         for r_name, metrics in retriever_results.items():
             print(f"- {r_name.capitalize()} Retriever:")
             for m_name, score in metrics.items():
                 print(f"  - {m_name}: {score:.4f}")
                 
         print("\n2. Evaluating Generation (Requires OpenAI API Key and Cost)...")
-        # To avoid unexpected costs during a dummy run, we comment this out
+        # To avoid unexpected costs during a dummy run, we check for API key
         if os.getenv("OPENROUTER_API_KEY"):
             ragas_results = evaluator.evaluate_generation_with_ragas(eval_data, top_k=5)
             print("Ragas Results:", ragas_results)
+            
+            # handle both EvaluationResult object and dictionary
+            # Ragas 0.4.x has summarized scores in _scores_dict (repr shows this)
+            # result.scores is a list of per-row scores, which caused the crash
+            if hasattr(ragas_results, "_scores_dict"):
+                scores_dict = ragas_results._scores_dict
+            elif hasattr(ragas_results, "items"):
+                scores_dict = ragas_results
+            else:
+                # fallback: try to convert to dict or use as is
+                try:
+                    scores_dict = dict(ragas_results)
+                except (TypeError, ValueError):
+                    scores_dict = ragas_results
+            
+            all_results["generation_evaluation"] = {
+                "ragas_results": {k: float(v) if not isinstance(v, (dict, list)) else v for k, v in scores_dict.items()},
+                "retriever_type": "hybrid" # default used in method
+            }
         else:
             print("Skipping Ragas: No OPENROUTER_API_KEY found.")
+            all_results["generation_evaluation"] = {"status": "skipped", "reason": "No OPENROUTER_API_KEY"}
+
+        # Export results to JSON
+        os.makedirs("results", exist_ok=True)
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        export_path = f"results/evaluation_results_{timestamp_str}.json"
+        
+        with open(export_path, "w", encoding="utf-8") as f:
+            json.dump(all_results, f, indent=2, ensure_ascii=False)
+            
+        print(f"\n--- Evaluation Complete ---")
+        print(f"Results exported to: {export_path}")
