@@ -3,6 +3,7 @@ from typing import List, Dict, Any
 
 from dataclasses import dataclass
 from datasets import Dataset
+import yaml
 
 import sys
 import os
@@ -33,7 +34,7 @@ class RAGEvaluator:
         self.sparse = SparseRetriever(self.store)
         self.hybrid = HybridRetriever(self.store)
         
-    def evaluate_retrievers(self, dataset: List[QAPair], top_k: int = 5) -> Dict[str, Dict[str, float]]:
+    def evaluate_retrievers(self, dataset: List[QAPair], top_k: int = 20) -> Dict[str, Dict[str, float]]:
         """
         Evaluates the dense, sparse, and hybrid retrievers using standard IR metrics.
         """
@@ -95,7 +96,11 @@ class RAGEvaluator:
                 
         return results
 
-    def evaluate_generation_with_ragas(self, dataset: List[QAPair], top_k: int = 5, retriever_type: str = "hybrid") -> Dict[str, float]:
+    def evaluate_generation_with_ragas(self, dataset: List[QAPair], top_k: int = 5, retriever_type: str = "hybrid", 
+                                      use_recomp: bool = False, recomp_mode: str = "extractive",
+                                      llm_model: str = "meta-llama/llama-3.1-70b-instruct",
+                                      temperature: float = 0.1) -> Dict[str, Any]:
+
         """
         Evaluates generator outputs using ragas metrics.
         Requires OpenAI API key to be set in environment.
@@ -108,6 +113,7 @@ class RAGEvaluator:
                 ContextPrecision,
                 ContextRecall,
             )
+
             from ragas.llms import llm_factory
             from ragas.embeddings import HuggingFaceEmbeddings as RagasHFEmbeddings
         except ImportError:
@@ -127,7 +133,7 @@ class RAGEvaluator:
         )
         
         ragas_llm = llm_factory(
-            "meta-llama/llama-3.1-70b-instruct",
+            llm_model,
             client=openai_client,
         )
         ragas_embeddings = RagasHFEmbeddings(model="BAAI/bge-small-en-v1.5")
@@ -151,9 +157,22 @@ class RAGEvaluator:
         answers = []
         contexts = []
         
-        print("Generating answers for Ragas evaluation...")
+        print(f"Generating answers for Ragas evaluation (RECOMP: {use_recomp})...")
         from src.generation import RAGGenerator
-        generator = RAGGenerator()
+        from src.compressor import RECOMPCompressor
+        
+        compressor = RECOMPCompressor(mode=recomp_mode) if use_recomp else None
+        
+        # Initialize RAGGenerator with custom LLM settings if needed
+        from langchain_openai import ChatOpenAI
+        llm = ChatOpenAI(
+            model=llm_model,
+            openai_api_base="https://openrouter.ai/api/v1",
+            openai_api_key=openrouter_key,
+            temperature=temperature,
+        )
+        generator = RAGGenerator(llm=llm, compressor=compressor)
+
         
         for qa in dataset:
             queries.append(qa.query)
@@ -168,8 +187,11 @@ class RAGEvaluator:
             # Generate answer using RAGGenerator
             try:
                 sources = res.get("sources", [])
-                answer = generator.generate(qa.query, retrieved_contexts, sources)
+                gen_result = generator.generate(qa.query, retrieved_contexts, sources)
+                # If gen_result is a dict, get the answer field. Fallback to str(gen_result) if it's something else.
+                answer = gen_result.get("answer", str(gen_result)) if isinstance(gen_result, dict) else str(gen_result)
                 answers.append(answer)
+
             except Exception as e:
                 print(f"  Warning: Generation failed for query '{qa.query[:50]}...': {e}")
                 answers.append("Generation failed.")
@@ -215,15 +237,39 @@ if __name__ == "__main__":
     print("--- Running Evaluation on JSON dataset ---")
     
     parser = argparse.ArgumentParser(description="Run evaluation testing.")
-    parser.add_argument("--queries-file", type=str, default="data/queries/rag_questions.json")
+    parser.add_argument("--queries-file", type=str, help="Queries file (overrides config)")
+    parser.add_argument("--compressor", type=str, choices=["none", "extractive", "abstractive"], help="Compressor type (overrides config)")
+    parser.add_argument("--top-k", type=int, help="Top K retrieval (overrides config)")
+    parser.add_argument("--llm-model", type=str, help="LLM model (overrides config)")
+    parser.add_argument("--temperature", type=float, help="LLM temperature (overrides config)")
     args = parser.parse_args()
+
+    # Load defaults from config.yaml
+    config_path = "config.yaml"
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            config = yaml.safe_load(f)
+    else:
+        config = {
+            "retrieval": {"top_k": 5},
+            "generation": {"llm_model": "meta-llama/llama-3.1-70b-instruct", "temperature": 0.1},
+            "compression": {"mode": "none"},
+            "evaluation": {"queries_file": "data/queries/rag_questions.json"}
+        }
+
+    # Override config with any provided CLI arguments
+    queries_file = args.queries_file or config.get("evaluation", {}).get("queries_file", "data/queries/rag_questions.json")
+    compressor_mode = args.compressor or config.get("compression", {}).get("mode", "none")
+    top_k = args.top_k or config.get("retrieval", {}).get("top_k", 5)
+    llm_model = args.llm_model or config.get("generation", {}).get("llm_model", "meta-llama/llama-3.1-70b-instruct")
+    temperature = args.temperature if args.temperature is not None else config.get("generation", {}).get("temperature", 0.1)
 
     # Load questions from the JSON file
     try:
-        with open(args.queries_file, "r", encoding="utf-8") as f:
+        with open(queries_file, "r", encoding="utf-8") as f:
             rag_questions = json.load(f)
     except FileNotFoundError:
-        print(f"Error: Could not find {args.queries_file}")
+        print(f"Error: Could not find {queries_file}")
         sys.exit(1)
         
     eval_data = []
@@ -247,8 +293,16 @@ if __name__ == "__main__":
     # Store all results for export
     all_results = {
         "timestamp": datetime.now().isoformat(),
-        "queries_file": args.queries_file,
+        "queries_file": queries_file,
         "num_questions": len(eval_data),
+        "settings": {
+            "top_k": top_k,
+            "compressor": compressor_mode,
+            "llm_model": llm_model,
+            "temperature": temperature,
+            "provider": config.get("generation", {}).get("provider", "OpenRouter"),
+            "embedding_model": config.get("retrieval", {}).get("embedding_model", "BAAI/bge-small-en-v1.5")
+        },
         "retriever_evaluation": {},
         "generation_evaluation": {}
     }
@@ -257,8 +311,8 @@ if __name__ == "__main__":
     if not os.path.exists(evaluator.store.docstore_path):
          print("Warning: Index/Docstore not found. Please ingest data before running the evaluation. Skipping evaluation logic.")
     else:
-        print("\n1. Evaluating Retrievers...")
-        retriever_results = evaluator.evaluate_retrievers(eval_data, top_k=5)
+        print(f"\n1. Evaluating Retrievers (top_k={top_k})...")
+        retriever_results = evaluator.evaluate_retrievers(eval_data, top_k=top_k)
         all_results["retriever_evaluation"] = retriever_results
         
         for r_name, metrics in retriever_results.items():
@@ -269,8 +323,17 @@ if __name__ == "__main__":
         print("\n2. Evaluating Generation (Requires OpenAI API Key and Cost)...")
         # To avoid unexpected costs during a dummy run, we check for API key
         if os.getenv("OPENROUTER_API_KEY"):
-            ragas_results = evaluator.evaluate_generation_with_ragas(eval_data, top_k=5)
+            retriever_type = "hybrid" # default retriever
+            ragas_results = evaluator.evaluate_generation_with_ragas(
+                eval_data, 
+                top_k=top_k, 
+                use_recomp=(compressor_mode != "none"), 
+                recomp_mode=compressor_mode,
+                llm_model=llm_model,
+                temperature=temperature
+            )
             print("Ragas Results:", ragas_results)
+
             
             if hasattr(ragas_results, "_scores_dict"):
                 scores_dict = ragas_results._scores_dict
@@ -285,7 +348,8 @@ if __name__ == "__main__":
             
             all_results["generation_evaluation"] = {
                 "ragas_results": {k: float(v) if not isinstance(v, (dict, list)) else v for k, v in scores_dict.items()},
-                "retriever_type": "hybrid" # default used in method
+                "retriever_type": retriever_type,
+                "compressor": compressor_mode
             }
         else:
             print("Skipping Ragas: No OPENROUTER_API_KEY found.")
