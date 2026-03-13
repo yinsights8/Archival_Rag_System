@@ -1,0 +1,22 @@
+# Archival RAG System Configuration
+
+# Retrieval Settings
+retrieval:
+  top_k: 20
+  embedding_model: "BAAI/bge-small-en-v1.5"
+
+# Generation Settings
+generation:
+  llm_model: "meta-llama/llama-3.1-70b-instruct"
+  temperature: 0.1
+  provider: "OpenRouter"
+  base_url: "https://openrouter.ai/api/v1"
+
+# Compression Settings
+compression:
+  mode: "abstractive" # options: none, extractive, abstractive
+
+# Evaluation Settings
+evaluation:
+  queries_file: "data/queries/rag_questions.json"
+  output_dir: "results"
