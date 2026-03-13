@@ -19,6 +19,10 @@ class RAQQueryResult(pydantic.BaseModel):
     answer: str
     sources: list[str]
     num_contexts: int
+    confidence: int = 0
+    reasoning: str = ""
+    ocr_issues_noted: str = ""
+
 
 class RAGEvalResult(pydantic.BaseModel):
     retriever_metrics: dict

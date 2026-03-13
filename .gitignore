@@ -30,3 +30,5 @@ planning/
 # Project specific
 *.log
 .python-version
+src/test_compressor.py
+results/

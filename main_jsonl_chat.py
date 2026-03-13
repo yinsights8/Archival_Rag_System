@@ -108,16 +108,20 @@ async def rag_query_nls_corpus(ctx: inngest.Context) -> str:
     # ── Step 4: LLM answer generation ──────────────────────────────────────────
     generator = RAGGenerator()
 
-    answer = await ctx.step.run(
+    gen_result = await ctx.step.run(
         "llm-answer",
         lambda: generator.generate(question, found.contexts, found.sources),
     )
 
     return RAQQueryResult(
-        answer=answer,
+        answer=gen_result.get("answer", ""),
         sources=found.sources,
-        num_contexts=len(found.contexts)
+        num_contexts=len(found.contexts),
+        confidence=gen_result.get("confidence", 0),
+        reasoning=gen_result.get("reasoning", ""),
+        ocr_issues_noted=gen_result.get("ocr_issues_noted", "")
     ).model_dump_json()
+
 
 @inngest_client.create_function(
     fn_id="RAG: Evaluate NLS Corpus",
