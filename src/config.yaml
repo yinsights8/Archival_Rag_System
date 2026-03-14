@@ -1,0 +1,23 @@
+# Archival RAG System Configuration
+
+# Retrieval Settings
+retrieval:
+  top_k: 20
+  embedding_model: "BAAI/bge-small-en-v1.5"
+
+# Generation Settings
+generation:
+  llm_model: "meta-llama/llama-3.3-70b-instruct:free" # "google/gemma-3-4b-it:free" #"meta-llama/llama-3.1-70b-instruct"
+  temperature: 0.2
+  provider: "OpenRouter"
+  base_url: "https://openrouter.ai/api/v1"
+  hub_handle: "system_prompt" # LangSmith Hub handle from user screenshot
+
+# Compression Settings
+compression:
+  mode: "abstractive" # options: none, extractive, abstractive
+
+# Evaluation Settings
+evaluation:
+  queries_file: "data/queries/rag_questions.json"
+  output_dir: "results"
