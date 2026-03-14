@@ -15,6 +15,7 @@ dependencies = [
     "langchain-community>=0.4.1",
     "langchain-huggingface>=1.2.0",
     "langchain-openai>=1.1.10",
+    "langsmith>=0.7.9",
     "numpy>=2.4.2",
     "orjson>=3.11.7",
     "pypdf>=6.7.5",
@@ -25,4 +26,5 @@ dependencies = [
     "sentence-transformers>=5.2.3",
     "tqdm>=4.67.3",
     "uvicorn>=0.41.0",
+    "wandb>=0.25.1",
 ]

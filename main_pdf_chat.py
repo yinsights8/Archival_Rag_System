@@ -5,6 +5,7 @@ import inngest.fast_api
 from src.ingest_pdf import load_and_chunk_pdf, embed_texts
 from src.custom_types import RAGChunkAndSrc, RAGUpsertResult, RAGSearchResult, RAQQueryResult
 from src.faiss_storage import FaissStorage
+from visualization.tracker import tracker
 import uuid
 import os
 
@@ -57,6 +58,7 @@ inngest_client = inngest.Inngest(
     # Event that triggers this function
     trigger=inngest.TriggerEvent(event="app/rag ingest pdf"),
 )
+@tracker.track_step("Ingest PDF")
 async def rag_ingest_pdf(ctx: inngest.Context) -> str:
     # Step 1: load the pdf file from the path and chunk it
     def _load(ctx: inngest.Context) -> RAGChunkAndSrc:
@@ -78,6 +80,7 @@ async def rag_ingest_pdf(ctx: inngest.Context) -> str:
         
     chunk_and_src = await ctx.step.run("load-and-chunk", lambda: _load(ctx), output_type=RAGChunkAndSrc)
     upsert_result = await ctx.step.run("upsert", lambda: _upsert(chunk_and_src), output_type=RAGUpsertResult)
+    tracker.save_run()
     return upsert_result.model_dump_json()
 
 
@@ -86,6 +89,7 @@ async def rag_ingest_pdf(ctx: inngest.Context) -> str:
     # Event that triggers this function
     trigger=inngest.TriggerEvent(event="app/rag_query_pdf")
 )
+@tracker.track_step("Query PDF")
 async def rag_query_pdf(ctx: inngest.Context) -> str:
     def _search(question: str, top_k: int = 5) -> RAGSearchResult:
         query_vec = embed_texts([question])[0]  # 1. convert the question into vector
@@ -134,6 +138,7 @@ async def rag_query_pdf(ctx: inngest.Context) -> str:
         sources=found.sources,
         num_contexts=len(found.contexts)
     ).model_dump_json()
+    tracker.save_run()
 
 app = FastAPI()
 
