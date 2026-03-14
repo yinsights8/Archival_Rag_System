@@ -2,25 +2,22 @@ import os
 import re
 import json
 import yaml
+import textwrap
 from typing import List
-from langchain_openai import ChatOpenAI
+import openai
 from dotenv import load_dotenv
 from src.compressor import RECOMPCompressor
+from langsmith import traceable, Client
+from langsmith.wrappers import wrap_openai
+from pathlib import Path
+from src import config
+
+PROMPTS_DIR = Path(__file__).parent / "prompts"
+DEFAULT_PROMPT_PATH = PROMPTS_DIR / "system_prompt.txt"
 
 load_dotenv()
 
-# Load centralized config if available
-CONFIG_PATH = "config.yaml"
-def load_config():
-    if os.path.exists(CONFIG_PATH):
-        try:
-            with open(CONFIG_PATH, "r") as f:
-                return yaml.safe_load(f)
-        except Exception:
-            return {}
-    return {}
-
-_config = load_config()
+_config = config.get_config()
 _gen_config = _config.get("generation", {})
 
 
@@ -29,56 +26,74 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Default model for query generation
-DEFAULT_MODEL = _gen_config.get("llm_model", "meta-llama/llama-3.1-70b-instruct")
-DEFAULT_TEMP = _gen_config.get("temperature", 0.1)
-DEFAULT_BASE_URL = _gen_config.get("base_url", "https://openrouter.ai/api/v1")
+DEFAULT_MODEL = _gen_config.get("llm_model")
+DEFAULT_TEMP = _gen_config.get("temperature")
+DEFAULT_BASE_URL = _gen_config.get("base_url")
 
 
-def get_llm_client(model: str = None, temperature: float = None) -> ChatOpenAI:
-    """Create OpenRouter client."""
+def get_llm_client(model: str = None, temperature: float = None) -> openai.OpenAI:
+    """Create OpenRouter client using native OpenAI library."""
     if not OPENROUTER_API_KEY or OPENROUTER_API_KEY == "your_key_here":
         raise ValueError(
             "OPENROUTER_API_KEY not set. Add it to .env file.\n"
             "Get a key at https://openrouter.ai/keys"
         )
-    return ChatOpenAI(
-        model=model or DEFAULT_MODEL,
-        openai_api_base=DEFAULT_BASE_URL,
-        openai_api_key=OPENROUTER_API_KEY,
-        temperature=temperature if temperature is not None else DEFAULT_TEMP,
+    client = openai.OpenAI(
+        base_url=DEFAULT_BASE_URL,
+        api_key=OPENROUTER_API_KEY,
     )
+    # Wrap for LangSmith tracing
+    return wrap_openai(client)
 
 
 class RAGGenerator:
     """Handles LLM answer generation from retrieved contexts."""
 
-    def __init__(self, llm: ChatOpenAI = None, compressor: RECOMPCompressor = None):
+    def __init__(self, llm: openai.OpenAI = None, compressor: RECOMPCompressor = None):
         self.llm = llm or get_llm_client()
+        self.model_name = _gen_config.get("llm_model", DEFAULT_MODEL)
         self.compressor = compressor
-        self.prompt_template = """You are a historical research assistant analyzing digitized archival documents.
+        self.hub_handle = _gen_config.get("hub_handle")
+        
+        # Local fallback prompt template from external file
+        if DEFAULT_PROMPT_PATH.exists():
+            self.local_prompt_template = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8").strip()
+        else:
+            # Hardcoded emergency fallback if file is missing
+            self.local_prompt_template = "Context: {context}\nQuestion: {question}"
+            print(f"Warning: Prompt file not found at {DEFAULT_PROMPT_PATH}. Using emergency fallback.")
 
-                        The following passages are from historical documents that may contain OCR errors 
-                        (e.g., character substitutions, missing words, garbled text).
+        self.prompt_template = self._load_prompt()
 
-                        CONTEXT:
-                        {context}
+    def _load_prompt(self) -> str:
+        """Loads prompt from LangSmith Hub if handle exists, else uses local fallback."""
+        if not self.hub_handle:
+            return self.local_prompt_template
 
-                        QUESTION: {question}
+        try:
+            client = Client()
+            hub_prompt = client.pull_prompt(self.hub_handle)
+            
+            # Extract template string from Hub object (handles PromptTemplate, ChatPromptTemplate, etc.)
+            if hasattr(hub_prompt, "template"):
+                return hub_prompt.template
+            elif hasattr(hub_prompt, "messages"):
+                # For ChatPromptTemplate, we usually want the user message content
+                for msg in hub_prompt.messages:
+                    if hasattr(msg, "prompt") and hasattr(msg.prompt, "template"):
+                        return msg.prompt.template
+                    elif hasattr(msg, "content"):
+                        return msg.content
+            
+            print(f"Info: Using local prompt as Hub object structure was unexpected for {self.hub_handle}")
+            return self.local_prompt_template
+            
+        except Exception as e:
+            print(f"Warning: Failed to pull prompt from Hub ({self.hub_handle}): {e}")
+            print("Falling back to local prompt template.")
+            return self.local_prompt_template
 
-                        Instructions:
-                        1. Answer the question based ONLY on the provided context
-                        2. If the context doesn't contain enough information, say "INSUFFICIENT_CONTEXT"
-                        3. Be aware that OCR errors may affect readability
-                        4. Rate your confidence in the answer from 0 to 100
-
-                        Respond in this exact JSON format:
-                        {{
-                            "answer": "your answer here",
-                            "confidence": 85,
-                            "reasoning": "brief explanation of how you derived the answer",
-                            "ocr_issues_noted": "any OCR errors you noticed that affected comprehension"
-                        }}"""
-
+    @traceable
     def generate(self, question: str, contexts: List[str], sources: List[str] = None) -> dict:
         """
         Generate a structured answer given a question and retrieved contexts.
@@ -91,20 +106,32 @@ class RAGGenerator:
         Returns:
             dict: The generated JSON response containing answer, confidence, reasoning, and ocr_issues_noted.
         """
+        # print(f"DEBUG: Number of input contexts: {len(contexts)}")
         if self.compressor:
             context_text = self.compressor.compress(question, contexts)
         else:
             context_text = "\n\n---\n\n".join(contexts)
         
+        if not context_text:
+            print(f"Warning: Empty context for question: {question[:50]}...")
+            
         prompt = self.prompt_template.format(
-
             context=context_text,
             question=question
         )
         
+        # print(f"DEBUG: Final Prompt length: {len(prompt)}")
+        # print(f"DEBUG: Context length in prompt: {len(context_text)}")
+        
         try:
-            response = self.llm.invoke(prompt)
-            content = response.content.strip()
+            response = self.llm.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=DEFAULT_TEMP,
+            )
+            content = response.choices[0].message.content.strip()
             
             # Parse JSON response
             if "```" in content:
@@ -136,7 +163,7 @@ class RAGGenerator:
                 }
             
             # Attach model name for reference
-            result["model"] = self.llm.model_name
+            result["model"] = self.model_name
             return result
             
         except Exception as e:

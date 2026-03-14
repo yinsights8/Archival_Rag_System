@@ -20,6 +20,7 @@ class DenseRetriever:
     def __init__(self, faiss_store: Optional[FaissStorage] = None):
         self.store = faiss_store or FaissStorage()
 
+    # @tracker.track_step("Dense Search")
     def search(self, query: str, top_k: int = 5) -> Dict[str, Any]:
         """Convert query to vector and search Faiss."""
         query_vec = embed_texts([query])[0]
@@ -76,6 +77,7 @@ class SparseRetriever:
             pickle.dump(self.bm25, f)
         print("BM25 index built and cached.")
 
+    # @tracker.track_step("Sparse Search")
     def search(self, query: str, top_k: int = 5) -> Dict[str, Any]:
         """Search BM25 index."""
         if not self.bm25:
@@ -121,6 +123,7 @@ class HybridRetriever:
         self.sparse = SparseRetriever(self.faiss_store)
         self.rrf_k = rrf_k
 
+    # @tracker.track_step("Hybrid Search")
     def search(self, query: str, top_k: int = 5) -> Dict[str, Any]:
         """
         Search both dense and sparse indices and merge results with RRF.

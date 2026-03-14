@@ -1,6 +1,9 @@
 import torch
 from typing import List
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForSequenceClassification
+# from visualization.tracker import tracker
+from langsmith import traceable   # trace the function calls correctly
+from src.config import get_config
 
 class RECOMPCompressor:
     """
@@ -8,15 +11,18 @@ class RECOMPCompressor:
     Supports both extractive and abstractive modes.
     """
 
-    def __init__(self, mode: str = "extractive", device: str = None):
+    def __init__(self, mode: str = None, device: str = None):
         """
         Initialize the compressor.
         
         Args:
-            mode: 'extractive' or 'abstractive'.
+            mode: 'extractive' or 'abstractive'. If None, loads from config.
             device: 'cuda' or 'cpu'. If None, auto-detects.
         """
-        self.mode = mode.lower()
+        config_dict = get_config()
+        self.mode = (mode or config_dict.get("compression", {}).get("mode", "extractive")).lower()
+        self.top_n = config_dict.get("retrieval", {}).get("top_k", 5)
+        
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
@@ -35,18 +41,19 @@ class RECOMPCompressor:
 
         print(f"Initialized RECOMPCompressor in {self.mode} mode on {self.device}")
 
-    def compress(self, query: str, contexts: List[str], top_n: int = 5) -> str:
+    # @tracker.track_step("Context Compression")
+    @traceable
+    def compress(self, query: str, contexts: List[str], top_n: int = None) -> str:
         """
         Compress retrieved contexts based on the query.
         
         Args:
             query: The user query.
             contexts: List of retrieved context strings.
-            top_n: Number of sentences to keep (for extractive) or max output length (for abstractive logic).
-            
-        Returns:
-            str: Compressed context.
+            top_n: Number of sentences to keep (for extractive). Defaults to self.top_n.
         """
+        if top_n is None:
+            top_n = self.top_n
         if not contexts:
             return ""
 
