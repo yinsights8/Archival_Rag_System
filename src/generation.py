@@ -4,12 +4,20 @@ import json
 import yaml
 import textwrap
 from typing import List
-import openai
+from openai import OpenAI
 from dotenv import load_dotenv
 from src.compressor import RECOMPCompressor
 from langsmith import traceable, Client
 from langsmith.wrappers import wrap_openai
+from langchain_core.rate_limiters import InMemoryRateLimiter
 from pathlib import Path
+import time
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
 from src import config
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
@@ -29,16 +37,18 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = _gen_config.get("llm_model")
 DEFAULT_TEMP = _gen_config.get("temperature")
 DEFAULT_BASE_URL = _gen_config.get("base_url")
+MAX_RETRIES = _gen_config.get("max_retries", 3)
+RPM_LIMIT = _gen_config.get("rpm_limit", 10)
 
 
-def get_llm_client(model: str = None, temperature: float = None) -> openai.OpenAI:
+def get_llm_client(model: str = None, temperature: float = None) -> OpenAI:
     """Create OpenRouter client using native OpenAI library."""
     if not OPENROUTER_API_KEY or OPENROUTER_API_KEY == "your_key_here":
         raise ValueError(
             "OPENROUTER_API_KEY not set. Add it to .env file.\n"
             "Get a key at https://openrouter.ai/keys"
         )
-    client = openai.OpenAI(
+    client = OpenAI(
         base_url=DEFAULT_BASE_URL,
         api_key=OPENROUTER_API_KEY,
     )
@@ -49,11 +59,16 @@ def get_llm_client(model: str = None, temperature: float = None) -> openai.OpenA
 class RAGGenerator:
     """Handles LLM answer generation from retrieved contexts."""
 
-    def __init__(self, llm: openai.OpenAI = None, compressor: RECOMPCompressor = None):
+    def __init__(self, llm: OpenAI = None, compressor: RECOMPCompressor = None):
         self.llm = llm or get_llm_client()
         self.model_name = _gen_config.get("llm_model", DEFAULT_MODEL)
         self.compressor = compressor
         self.hub_handle = _gen_config.get("hub_handle")
+        
+        # Initialize LangChain's InMemoryRateLimiter (converting RPM to RPS)
+        self.rate_limiter = InMemoryRateLimiter(
+            requests_per_second=RPM_LIMIT / 60.0 if RPM_LIMIT > 0 else 0.1
+        )
         
         # Local fallback prompt template from external file
         if DEFAULT_PROMPT_PATH.exists():
@@ -93,7 +108,7 @@ class RAGGenerator:
             print("Falling back to local prompt template.")
             return self.local_prompt_template
 
-    @traceable
+    # @traceable
     def generate(self, question: str, contexts: List[str], sources: List[str] = None) -> dict:
         """
         Generate a structured answer given a question and retrieved contexts.
@@ -122,15 +137,26 @@ class RAGGenerator:
         
         # print(f"DEBUG: Final Prompt length: {len(prompt)}")
         # print(f"DEBUG: Context length in prompt: {len(context_text)}")
-        
-        try:
-            response = self.llm.chat.completions.create(
+
+        @retry(
+            wait=wait_exponential(multiplier=1, min=4, max=10),
+            stop=stop_after_attempt(MAX_RETRIES),
+            retry=retry_if_exception_type((Exception)), # Ideally specify specific OpenAI errors if possible
+            reraise=True
+        )
+        def call_llm_with_retry():
+            # Use LangChain rate limiter
+            self.rate_limiter.acquire()
+            return self.llm.chat.completions.create(
                 model=self.model_name,
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
                 temperature=DEFAULT_TEMP,
             )
+
+        try:
+            response = call_llm_with_retry()
             content = response.choices[0].message.content.strip()
             
             # Parse JSON response
@@ -158,7 +184,7 @@ class RAGGenerator:
                 result = {
                     "answer": answer_match.group(1) if answer_match else content[:200],
                     "confidence": int(conf_match.group(1)) if conf_match else 50,
-                    "reasoning": reasoning_match.group(1) if reasoning_match else "Failed to parse structured response",
+                    "reasoning": reason_match.group(1) if reason_match else "Failed to parse structured response",
                     "ocr_issues_noted": ocr_match.group(1) if ocr_match else "",
                 }
             

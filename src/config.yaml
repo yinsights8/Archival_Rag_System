@@ -12,6 +12,8 @@ generation:
   provider: "OpenRouter"
   base_url: "https://openrouter.ai/api/v1"
   hub_handle: "system_prompt" # LangSmith Hub handle from user screenshot
+  max_retries: 3
+  rpm_limit: 10 # Requests per minute (adjust based on your tier)
 
 # Compression Settings
 compression:

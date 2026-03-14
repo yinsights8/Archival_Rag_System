@@ -75,18 +75,24 @@ The system allows you to:
 
 ## Architecture
 
-```
-User Query
-    │
-    ├─► Dense Retriever      (FAISS vector search via BAAI/bge-small-en-v1.5)
-    │
-    ├─► Sparse Retriever     (BM25 via rank_bm25 — cached index from docstore)
-    │
-    └─► Hybrid Retriever     (Reciprocal Rank Fusion of Dense + Sparse)
-            │
-            ├─► [Optional] Compressor (RECOMP) → Improves context efficiency
-            │
-            └─► LLM (LLaMA 3.1 70B via OpenRouter) → Answer
+```mermaid
+graph TD
+    subgraph "Retrieval Layer"
+        UserQuery[User Query] --> Dense[Dense Retriever]
+        UserQuery --> Sparse[Sparse Retriever]
+        Dense --> Hybrid[Hybrid Retriever]
+        Sparse --> Hybrid
+    end
+
+    subgraph "Processing & Generation"
+        Hybrid --> Compressor[RECOMP Compressor]
+        Compressor --> RateLimit["Rate Limiter (InMemory)"]
+        RateLimit --> LLM["LLM (Native OpenAI)"]
+        Hub["LangSmith Hub"] -. Fetch Prompt .-> LLM
+    end
+
+    LLM --> Answer[Output Answer]
+    LLM -. Tracing .-> LangSmith[LangSmith Monitoring]
 ```
 
 ## Evaluation Framework
@@ -118,24 +124,24 @@ Each stage is tracked as a **named Inngest step**, visible individually in the I
 ## Project Structure
 
 ```
-.
 ├── main_jsonl_chat.py          # FastAPI + Inngest functions (ingest & query)
 ├── evaluation/
-│   ├── evaluate.py             # Main evaluation entry point
+│   ├── evaluate.py             # Main evaluation entry point (LangSmith integrated)
 │   ├── metrics.py              # Mathematical IR metric implementations
 │   └── trigger_evaluation.py   # Inngest trigger for async evaluation
 ├── src/
-│   ├── retrievers.py           # DenseRetriever, SparseRetriever, HybridRetriever
-│   ├── ingest_corpus_jsonl.py  # JSONL streaming, chunking, embeddings
-│   ├── faiss_storage.py        # FAISS vector store (persistent, disk-backed)
-│   ├── generation.py           # LLM call helpers
+│   ├── config.yaml             # Centralized System Configuration
+│   ├── generation.py           # LLM Handlers with Rate Limiting & Retries
+│   ├── compressor.py           # RECOMP context compression (@traceable)
+│   ├── prompts/
+│   │   └── system_prompt.txt   # Local fallback prompt template
+│   ├── retrievers.py           # Dense, Sparse, and Hybrid Retrievers
+│   ├── faiss_storage.py        # persistent vector store
 │   └── custom_types.py         # Pydantic models
-    └── compressor.py           # [Planned] RECOMP context compression
 ├── data/
-│   ├── corpus2.jsonl           # Archival document corpus
-│   └── rag_dataset/            # Exported evaluation datasets (CSV)
-├── results/                    # Exported evaluation summary reports (JSON)
-├── storage/                    # Persistent index storage (FAISS, BM25)
+│   └── queries/                # Evaluation and test question sets
+├── results/                    # Exported evaluation reports
+├── storage/                    # Persistent FAISS and BM25 indices
 └── pyproject.toml
 ```
 
@@ -154,10 +160,14 @@ uv sync
 Create a `.env` file in the project root:
 
 ```env
-OPENROUTER_API_KEY=your_api_key_here
-```
+# LLM Provider
+OPENROUTER_API_KEY=your_key_here
 
-Get your key from [openrouter.ai/keys](https://openrouter.ai/keys).
+# Monitoring & Prompt Hub
+LANGSMITH_API_KEY=your_key_here
+LANGSMITH_TRACING=true
+LANGSMITH_PROJECT=archival-rag-evaluation
+```
 
 ### 3. Run the Server
 
@@ -220,10 +230,19 @@ Each query run is broken into 4 tracked steps:
 
 ## Configuration
 
-| Variable | Default | Description |
+The system is configured via `src/config.yaml`. Key settings include:
+
+| Section | Key | Description |
 |---|---|---|
-| `EMB_MODEL_NAME` | `BAAI/bge-small-en-v1.5` | Embedding model |
-| `EMB_DIM` | `384` | Embedding dimension |
-| `CHUNK_SIZE` | `900` | Characters per chunk |
-| `CHUNK_OVERLAP` | `150` | Overlap between chunks |
-| `DEFAULT_MODEL` | `meta-llama/llama-3.1-70b-instruct` | LLM for answer generation |
+| **Retrieval** | `top_k` | Number of chunks to retrieve |
+| | `embedding_model` | Model used for dense embeddings |
+| **Generation** | `llm_model` | Model name (OpenRouter format) |
+| | `rpm_limit` | Rate limit (Requests Per Minute) |
+| | `max_retries` | Number of retries on API failure |
+| | `hub_handle` | LangSmith Hub handle for prompts |
+| **Compression** | `mode` | `none`, `extractive`, or `abstractive` |
+
+### Prompt Management
+Prompt templates are managed via **LangSmith Hub**. 
+- **Primary**: System pulls from `hub_handle`.
+- **Fallback**: System uses `src/prompts/system_prompt.txt` if Hub is unavailable.
