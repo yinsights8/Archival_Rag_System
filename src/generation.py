@@ -108,7 +108,7 @@ class RAGGenerator:
             print("Falling back to local prompt template.")
             return self.local_prompt_template
 
-    # @traceable
+    @traceable(run_type="response_generator")
     def generate(self, question: str, contexts: List[str], sources: List[str] = None) -> dict:
         """
         Generate a structured answer given a question and retrieved contexts.

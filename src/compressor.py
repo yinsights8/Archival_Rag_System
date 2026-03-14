@@ -41,8 +41,7 @@ class RECOMPCompressor:
 
         print(f"Initialized RECOMPCompressor in {self.mode} mode on {self.device}")
 
-    # @tracker.track_step("Context Compression")
-    @traceable
+    @traceable(run_type="context_compression")
     def compress(self, query: str, contexts: List[str], top_n: int = None) -> str:
         """
         Compress retrieved contexts based on the query.
