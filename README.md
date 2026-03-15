@@ -74,12 +74,23 @@ The system allows you to:
 
 ```mermaid
 graph TD
-    CLI[interact.py CLI] --> Dense[Dense Retriever]
+    subgraph "Entry Points"
+        CLI[interact.py CLI]
+        Web[main_jsonl_chat.py FastAPI]
+    end
+
+    subgraph "Retrieval Layer"
+        CLI --> Hybrid[Hybrid Retriever]
+        Web --> Hybrid
+        Hybrid --> Dense[Dense Retriever]
+        Hybrid --> Sparse[Sparse Retriever]
+    end
 
     subgraph "Processing & Generation"
-        Dense --> Compressor[RECOMP Compressor]
-        Compressor --> LLM["LLM (OpenRouter)"]
-        Hub["LangSmith Hub"] -. Prompt .-> LLM
+        Hybrid --> Compressor[RECOMP Compressor]
+        Compressor --> RateLimit["Rate Limiter (Synchronous)"]
+        RateLimit --> LLM["LLM (Native OpenAI)"]
+        Hub["LangSmith Hub"] -. Fetch Prompt .-> LLM
     end
 
     LLM --> Answer[Output Answer]
