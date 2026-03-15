@@ -241,8 +241,11 @@ The system is configured via `src/config.yaml`. Key settings include:
 | | `max_retries` | Number of retries on API failure |
 | | `hub_handle` | LangSmith Hub handle for prompts |
 | **Compression** | `mode` | `none`, `extractive`, or `abstractive` |
+| | `hub_handle` | LangSmith Hub handle for compressor prompt |
+| | `extractive_model` | HF model for extractive compression |
+| | `abstractive_model` | HF model for abstractive compression |
 
 ### Prompt Management
 Prompt templates are managed via **LangSmith Hub**. 
 - **Primary**: System pulls from `hub_handle`.
-- **Fallback**: System uses `src/prompts/system_prompt.txt` if Hub is unavailable.
+- **Fallback**: System uses local JSON files in `src/prompts/` (e.g., `system_prompt.json`).

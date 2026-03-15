@@ -40,7 +40,7 @@ class RAGEvaluator:
         self.sparse = SparseRetriever(self.store)
         self.hybrid = HybridRetriever(self.store)
     
-    @traceable(run_type="retriever_evaluation")
+    @traceable(run_type="retriever")
     def evaluate_retrievers(self, dataset: List[QAPair], top_k: int = 20) -> Dict[str, Dict[str, float]]:
         """
         Evaluates the dense, sparse, and hybrid retrievers using standard IR metrics.
@@ -103,7 +103,7 @@ class RAGEvaluator:
                 
         return results
 
-    @traceable(run_type="ragas_evaluation")
+    @traceable(run_type="chain")
     def evaluate_generation_with_ragas(self, dataset: List[QAPair], top_k: int = 5, retriever_type: str = "hybrid", 
                                       use_recomp: bool = False, recomp_mode: str = "extractive",
                                       llm_model: str = None) -> Dict[str, Any]:

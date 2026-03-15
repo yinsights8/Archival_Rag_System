@@ -12,16 +12,19 @@ from langsmith.wrappers import wrap_openai
 from langchain_core.rate_limiters import InMemoryRateLimiter
 from pathlib import Path
 import time
+from datetime import datetime
 from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
     retry_if_exception_type,
 )
+import openai
+
 from src import config
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
-DEFAULT_PROMPT_PATH = PROMPTS_DIR / "system_prompt.txt"
+DEFAULT_PROMPT_PATH = PROMPTS_DIR / "system_prompt.json"
 
 load_dotenv()
 
@@ -38,7 +41,7 @@ DEFAULT_MODEL = _gen_config.get("llm_model")
 DEFAULT_TEMP = _gen_config.get("temperature")
 DEFAULT_BASE_URL = _gen_config.get("base_url")
 MAX_RETRIES = _gen_config.get("max_retries", 3)
-RPM_LIMIT = _gen_config.get("rpm_limit", 10)
+RPM_LIMIT = _gen_config.get("rpm_limit", 30)
 
 
 def get_llm_client(model: str = None, temperature: float = None) -> OpenAI:
@@ -65,14 +68,20 @@ class RAGGenerator:
         self.compressor = compressor
         self.hub_handle = _gen_config.get("hub_handle")
         
-        # Initialize LangChain's InMemoryRateLimiter (converting RPM to RPS)
-        self.rate_limiter = InMemoryRateLimiter(
-            requests_per_second=RPM_LIMIT / 60.0 if RPM_LIMIT > 0 else 0.1
-        )
+        # Custom synchronous rate limiter setup
+        self.rpm_limit = RPM_LIMIT
+        self.min_interval = 60.0 / self.rpm_limit if self.rpm_limit > 0 else 6.0
+        self.last_call_time = 0
         
         # Local fallback prompt template from external file
         if DEFAULT_PROMPT_PATH.exists():
-            self.local_prompt_template = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8").strip()
+            try:
+                with open(DEFAULT_PROMPT_PATH, "r", encoding="utf-8") as f:
+                    prompt_data = json.load(f)
+                    self.local_prompt_template = prompt_data.get("template", "")
+            except Exception as e:
+                print(f"Error loading JSON prompt: {e}")
+                self.local_prompt_template = "Context: {context}\nQuestion: {question}"
         else:
             # Hardcoded emergency fallback if file is missing
             self.local_prompt_template = "Context: {context}\nQuestion: {question}"
@@ -108,7 +117,7 @@ class RAGGenerator:
             print("Falling back to local prompt template.")
             return self.local_prompt_template
 
-    @traceable(run_type="response_generator")
+    @traceable(run_type="chain")
     def generate(self, question: str, contexts: List[str], sources: List[str] = None) -> dict:
         """
         Generate a structured answer given a question and retrieved contexts.
@@ -139,14 +148,19 @@ class RAGGenerator:
         # print(f"DEBUG: Context length in prompt: {len(context_text)}")
 
         @retry(
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            stop=stop_after_attempt(MAX_RETRIES),
-            retry=retry_if_exception_type((Exception)), # Ideally specify specific OpenAI errors if possible
+            wait=wait_exponential(multiplier=2, min=10, max=60),
+            stop=stop_after_attempt(MAX_RETRIES + 2),
+            retry=retry_if_exception_type((openai.RateLimitError, Exception)),
             reraise=True
         )
         def call_llm_with_retry():
-            # Use LangChain rate limiter
-            self.rate_limiter.acquire()
+            # Synchronous rate limiting logic
+            elapsed = time.time() - self.last_call_time
+            wait_time = self.min_interval - elapsed
+            if wait_time > 0:
+                time.sleep(wait_time)
+            
+            self.last_call_time = time.time()
             return self.llm.chat.completions.create(
                 model=self.model_name,
                 messages=[
