@@ -144,6 +144,22 @@ uv run evaluation/evaluate.py
 - **Detailed Dataset**: `data/rag_dataset/rag_dataset.csv` — Inspect every query, context, and generated answer.
 - **Summary Report**: `results/evaluation_results_[timestamp].json` — Quantitative summary of all scores.
 
+## Dataset Generation
+
+The project includes a synthetic dataset generation tool [create_queries.py](file:///e:/workspace/Archival_RAG_system/src/create_queries.py) to bootstrap evaluation.
+
+### 1. Generating Queries
+Uses an LLM to generate diverse retrieval and RAG questions from your corpus:
+```bash
+uv run src/create_queries.py --corpus data/corpus.jsonl --output data/queries/
+```
+
+### 2. Human Verification
+Supports a "Human-in-the-loop" mode where specialists can approve or reject generated queries:
+```bash
+uv run src/create_queries.py --verify data/queries/
+```
+
 ## Usage Summary
 
 | Command | Purpose |
@@ -151,6 +167,7 @@ uv run evaluation/evaluate.py
 | `uv run interact.py` | Start the live, interactive RAG chat loop. |
 | `uv run interact.py --eval` | Start live chat with real-time Ragas evaluation. |
 | `uv run evaluation/evaluate.py`| Run the full evaluation suite against the test dataset. |
+| `uv run src/create_queries.py` | Generate synthetic evaluation queries and Q&A pairs. |
 | `uv run uvicorn main_jsonl_chat:app` | Start the FastAPI server for Inngest-based processing. |
 
 ## Project Structure
@@ -163,6 +180,7 @@ uv run evaluation/evaluate.py
 │   ├── metrics.py              # Mathematical IR metric implementations
 │   └── trigger_evaluation.py   # Inngest trigger for async evaluation
 ├── src/
+│   ├── create_queries.py       # Synthetic Dataset Generation & Verification
 │   ├── config.yaml             # Centralized System Configuration
 │   ├── generation.py           # LLM Handlers with Rate Limiting & Retries
 │   ├── compressor.py           # RECOMP context compression (@traceable)
