@@ -74,23 +74,12 @@ The system allows you to:
 
 ```mermaid
 graph TD
-    subgraph "Entry Points"
-        CLI[interact.py CLI]
-        Web[main_jsonl_chat.py FastAPI]
-    end
-
-    subgraph "Retrieval Layer"
-        CLI --> Hybrid[Hybrid Retriever]
-        Web --> Hybrid
-        Hybrid --> Dense[Dense Retriever]
-        Hybrid --> Sparse[Sparse Retriever]
-    end
+    CLI[interact.py CLI] --> Dense[Dense Retriever]
 
     subgraph "Processing & Generation"
-        Hybrid --> Compressor[RECOMP Compressor]
-        Compressor --> RateLimit["Rate Limiter (Synchronous)"]
-        RateLimit --> LLM["LLM (Native OpenAI)"]
-        Hub["LangSmith Hub"] -. Fetch Prompt .-> LLM
+        Dense --> Compressor[RECOMP Compressor]
+        Compressor --> LLM["LLM (OpenRouter)"]
+        Hub["LangSmith Hub"] -. Prompt .-> LLM
     end
 
     LLM --> Answer[Output Answer]
@@ -139,6 +128,14 @@ To run a full evaluation on the `rag_questions.json` dataset:
 ```bash
 uv run evaluation/evaluate.py
 ```
+
+### LangSmith Cost & Token Monitoring
+
+The system automatically logs detailed usage metadata to LangSmith. You can monitor the following metrics per run:
+- **`prompt_tokens`**: Input overhead.
+- **`completion_tokens`**: Generator output length.
+- **`cost`**: Estimated dollar cost (OpenRouter compatible).
+- **`model`**: The specific LLM used for the generation.
 
 ### Evaluation Artifacts
 - **Detailed Dataset**: `data/rag_dataset/rag_dataset.csv` — Inspect every query, context, and generated answer.
