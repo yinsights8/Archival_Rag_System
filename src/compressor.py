@@ -27,7 +27,7 @@ class RECOMPCompressor:
         config_dict = get_config()
         comp_config = config_dict.get("compression", {})
         self.mode = (mode or comp_config.get("mode", "extractive")).lower()
-        self.top_n = config_dict.get("retrieval", {}).get("top_k", 5)
+        self.top_n = comp_config.get("top_k")
         self.hub_handle = comp_config.get("hub_handle")
 
         # Local fallback prompt template
