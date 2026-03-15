@@ -7,7 +7,7 @@ from typing import List
 from openai import OpenAI
 from dotenv import load_dotenv
 from src.compressor import RECOMPCompressor
-from langsmith import traceable, Client
+from langsmith import traceable, Client, get_current_run_tree
 from langsmith.wrappers import wrap_openai
 from langchain_core.rate_limiters import InMemoryRateLimiter
 from pathlib import Path
@@ -54,6 +54,10 @@ def get_llm_client(model: str = None, temperature: float = None) -> OpenAI:
     client = OpenAI(
         base_url=DEFAULT_BASE_URL,
         api_key=OPENROUTER_API_KEY,
+        default_headers={
+            "X-Title": "Archival RAG System",
+            "HTTP-Referer": "https://github.com/yinsights8/Archival_Rag_System",
+        }
     )
     # Wrap for LangSmith tracing
     return wrap_openai(client)
@@ -132,7 +136,7 @@ class RAGGenerator:
         """
         # print(f"DEBUG: Number of input contexts: {len(contexts)}")
         if self.compressor:
-            context_text = self.compressor.compress(question, contexts)
+            context_text = self.compressor.compress(question, contexts, top_n=self.compressor.top_n)
         else:
             context_text = "\n\n---\n\n".join(contexts)
         
@@ -167,13 +171,39 @@ class RAGGenerator:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=DEFAULT_TEMP,
+                extra_headers={
+                    "HTTP-Referer": "https://github.com/yinsights8/Archival_Rag_System",
+                    "X-Title": "Archival RAG System",
+                }
             )
 
         try:
             response = call_llm_with_retry()
             content = response.choices[0].message.content.strip()
             
-            # Parse JSON response
+            # Capture usage and cost
+            usage = getattr(response, "usage", None)
+            usage_data = {}
+            if usage:
+                usage_data = {
+                    "prompt_tokens": getattr(usage, "prompt_tokens", 0),
+                    "completion_tokens": getattr(usage, "completion_tokens", 0),
+                    "total_tokens": getattr(usage, "total_tokens", 0),
+                }
+                # OpenRouter sometimes puts cost in a 'cost' attribute on usage or in a separate field
+                if hasattr(usage, "cost"):
+                   usage_data["cost"] = usage.cost
+                elif hasattr(response, "cost"):
+                   usage_data["cost"] = response.cost
+            
+            # Explicitly log to LangSmith metadata if possible
+            run_tree = get_current_run_tree()
+            if run_tree:
+                run_tree.metadata.update(usage_data)
+                # Ensure the model name is also in metadata for column filtering
+                run_tree.metadata["model"] = self.model_name
+                # Add usage dictionary for standard LangSmith parsing
+                run_tree.metadata["usage"] = usage_data
             if "```" in content:
                 # Find the first JSON block or the first block that looks like JSON
                 blocks = content.split("```")
@@ -202,7 +232,8 @@ class RAGGenerator:
                     "ocr_issues_noted": ocr_match.group(1) if ocr_match else "",
                 }
             
-            # Attach model name for reference
+            # Attach usage data
+            result["usage"] = usage_data
             result["model"] = self.model_name
             return result
             

@@ -2,7 +2,7 @@
 
 # Retrieval Settings
 retrieval:
-  top_k: 10
+  top_k: 15
   embedding_model: "BAAI/bge-small-en-v1.5"
 
 # Generation Settings
@@ -18,7 +18,7 @@ generation:
 # Compression Settings
 compression:
   mode: "abstractive" # options: none, extractive, abstractive
-  top_k: 10
+  top_k: 15
   hub_handle: "recomp_prompt" # Placeholder handle
   extractive_model: "fangyuan/nq_extractive_compressor"
   abstractive_model: "fangyuan/nq_abstractive_compressor"

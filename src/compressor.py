@@ -15,18 +15,19 @@ class RECOMPCompressor:
     Supports both extractive and abstractive modes.
     """
 
-    def __init__(self, mode: str = None, device: str = None):
+    def __init__(self, mode: str = None, top_n: int = None, device: str = None):
         """
         Initialize the compressor.
         
         Args:
             mode: 'extractive' or 'abstractive'. If None, loads from config.
+            top_n: Number of sentences to keep (for extractive). If None, loads from config.
             device: 'cuda' or 'cpu'. If None, auto-detects.
         """
         config_dict = get_config()
         comp_config = config_dict.get("compression", {})
         self.mode = (mode or comp_config.get("mode", "extractive")).lower()
-        self.top_n = comp_config.get("top_k")
+        self.top_n = top_n or comp_config.get("top_k", 10)
         self.hub_handle = comp_config.get("hub_handle")
 
         # Local fallback prompt template
@@ -67,28 +68,43 @@ class RECOMPCompressor:
         if not self.hub_handle or self.mode != "abstractive":
             return self.local_prompt_template
 
+        # Simple session caching to avoid repeated slow network calls during development
+        if hasattr(self, "_cached_hub_prompt") and self._cached_hub_prompt:
+            return self._cached_hub_prompt
+
         try:
-            client = Client()
+            # We want a faster timeout here to avoid hanging the entire system
+            # if the LangSmith API is slow or unreachable.
+            client = Client(timeout_ms=3000) 
             hub_prompt = client.pull_prompt(self.hub_handle)
             
             # Extract template string from Hub object
+            template = None
             if hasattr(hub_prompt, "template"):
-                return hub_prompt.template
+                template = hub_prompt.template
             elif hasattr(hub_prompt, "messages"):
                 for msg in hub_prompt.messages:
                     if hasattr(msg, "prompt") and hasattr(msg.prompt, "template"):
-                        return msg.prompt.template
+                        template = msg.prompt.template
+                        break
                     elif hasattr(msg, "content"):
-                        return msg.content
+                        template = msg.content
+                        break
+            
+            if template:
+                self._cached_hub_prompt = template
+                return template
             
             print(f"Info: Using local compressor prompt as Hub object structure was unexpected for {self.hub_handle}")
             return self.local_prompt_template
             
         except Exception as e:
+            # Silently fallback to local prompt if network/API fails
+            # This prevents the whole system from crashing on startup
             print(f"Warning: Failed to pull compressor prompt from Hub ({self.hub_handle}): {e}")
             return self.local_prompt_template
 
-    @traceable(run_type="retriever")
+    @traceable
     def compress(self, query: str, contexts: List[str], top_n: int = None) -> str:
         """
         Compress retrieved contexts based on the query.

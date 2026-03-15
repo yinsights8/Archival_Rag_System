@@ -103,7 +103,7 @@ class RAGEvaluator:
                 
         return results
 
-    @traceable(run_type="chain")
+    # @traceable(run_type="chain")
     def evaluate_generation_with_ragas(self, dataset: List[QAPair], top_k: int = 5, retriever_type: str = "hybrid", 
                                       use_recomp: bool = False, recomp_mode: str = "extractive",
                                       llm_model: str = None) -> Dict[str, Any]:

@@ -3,15 +3,13 @@ import argparse
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
-
-# Ensure we can import from src
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.retrievers import DenseRetriever, SparseRetriever, HybridRetriever
+from src.retrievers import DenseRetriever
 from src.compressor import RECOMPCompressor
 from src.generation import RAGGenerator
 from src.config import get_config
-from langsmith import traceable
+from langsmith import traceable, get_current_run_tree
 from datasets import Dataset
 from langchain_core.tracers import LangChainTracer
 
@@ -45,6 +43,25 @@ def live_qa_session(query: str, retriever: DenseRetriever, generator: RAGGenerat
     print(f"[CONFIDENCE]: {confidence}/100")
     print(f"[REASONING]: {reasoning}")
     
+    # check the model response cost usage 
+    usage = response.get("usage", {})
+    if usage:
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        cost = usage.get("cost")
+        cost_str = f" | [COST]: ${cost:.6f}" if cost is not None else ""
+        print(f"[USAGE]: {prompt_tokens} prompt + {completion_tokens} completion = {usage.get('total_tokens', 0)} tokens{cost_str}")
+        
+        # Log to LangSmith metadata for this session run
+        rt = get_current_run_tree()
+        if rt:
+            rt.metadata.update({
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": usage.get('total_tokens', 0),
+                "cost": cost
+            })
+    
     # 3. Live Evaluation (Ragas)
     if evaluator_mode:
         if not contexts:
@@ -54,8 +71,8 @@ def live_qa_session(query: str, retriever: DenseRetriever, generator: RAGGenerat
         print("\n--- Running Live Evaluation (Ragas) ---")
         try:
             from ragas import evaluate
-            from ragas.metrics import Faithfulness, AnswerRelevancy
             from ragas.llms import llm_factory
+            from ragas.metrics import faithfulness, answer_relevancy
             from ragas.embeddings import HuggingFaceEmbeddings as RagasHFEmbeddings
             from openai import OpenAI
 
@@ -63,19 +80,13 @@ def live_qa_session(query: str, retriever: DenseRetriever, generator: RAGGenerat
             gen_config = config_dict.get("generation", {})
             ret_config = config_dict.get("retrieval", {})
             
-            # Use a slightly more "robust" model for EVALUATION if current model might be buggy with Ragas
-            # (Ragas often uses internal system prompts)
-            eval_model = generator.model_name
-            if "gemma-3" in eval_model:
-                # Gemma-3 might reject "Developer Instructions" (system prompts) used by Ragas
-                # Try fallback or explicitly inform the user
-                pass
 
             openrouter_key = os.getenv("OPENROUTER_API_KEY")
             openai_client = OpenAI(
                 base_url=gen_config.get("base_url", "https://openrouter.ai/api/v1"), 
                 api_key=openrouter_key
             )
+            eval_model = gen_config.get("llm_model", "no_model_selected")
             ragas_llm = llm_factory(eval_model, client=openai_client)
             ragas_embeddings = RagasHFEmbeddings(model=ret_config.get("embedding_model", "BAAI/bge-small-en-v1.5"))
             
@@ -94,15 +105,16 @@ def live_qa_session(query: str, retriever: DenseRetriever, generator: RAGGenerat
             }
             ragas_dataset = Dataset.from_dict(data)
             
-            # Evaluate (Faithfulness and AnswerRelevancy don't strictly require ground truth)
+            
+            # Setup metrics with the LLM/Embeddings
+            faithfulness.llm = ragas_llm
+            answer_relevancy.llm = ragas_llm
+            answer_relevancy.embeddings = ragas_embeddings
+            
             results = evaluate(
                 ragas_dataset,
-                metrics=[
-                    Faithfulness(llm=ragas_llm),
-                    AnswerRelevancy(llm=ragas_llm, embeddings=ragas_embeddings),
-                ],
-                raise_exceptions=False,
-                callbacks=[tracer]
+                metrics=[faithfulness, answer_relevancy],
+                raise_exceptions=False
             )
             
             if results and len(results) > 0:
@@ -113,6 +125,8 @@ def live_qa_session(query: str, retriever: DenseRetriever, generator: RAGGenerat
                 print("\n[EVALUATION FAILED]: Ragas returned no results. This might be due to model compatibility issues (e.g. system prompt rejection).")
                 
         except Exception as e:
+            # import traceback
+            # traceback.print_exc()
             print(f"Live evaluation failed: {str(e)}")
             if "Developer instruction" in str(e):
                 print("Tip: The selected model (Gemma-3?) may not allow system prompts used by Ragas. Try using a Llama model.")
@@ -128,7 +142,7 @@ def main():
     retrieval_top_k = args.top_k or config_dict.get("retrieval", {}).get("top_k", 10)
     
     print("--- Initializing Archival RAG System ---")
-    retriever = HybridRetriever()
+    retriever = DenseRetriever()
     
     compressor_mode = config_dict.get("compression", {}).get("mode", "extractive")
     if args.no_compress:
