@@ -70,23 +70,25 @@ The system allows you to:
 1. **Ingest archival corpora** — Stream `.jsonl` files, chunk documents, embed with BGE, and store in a FAISS vector index
 2. **Retrieve documents** — Three retrieval modes: Dense (semantic), Sparse (BM25 keyword), and Hybrid (RRF fusion)
 3. **Query with an LLM** — Retrieved context is passed to LLaMA 3.1 70B via OpenRouter to generate answers.
-4. **Evaluate Performance** — A dedicated evaluation suite to measure retriever accuracy and LLM answer quality.
-
-
-## Architecture
+4. **Evaluate Performance** — A dedicated evaluation suite to measure retriever accu## Architecture
 
 ```mermaid
 graph TD
+    subgraph "Entry Points"
+        CLI[interact.py CLI]
+        Web[main_jsonl_chat.py FastAPI]
+    end
+
     subgraph "Retrieval Layer"
-        UserQuery[User Query] --> Dense[Dense Retriever]
-        UserQuery --> Sparse[Sparse Retriever]
-        Dense --> Hybrid[Hybrid Retriever]
-        Sparse --> Hybrid
+        CLI --> Hybrid[Hybrid Retriever]
+        Web --> Hybrid
+        Hybrid --> Dense[Dense Retriever]
+        Hybrid --> Sparse[Sparse Retriever]
     end
 
     subgraph "Processing & Generation"
         Hybrid --> Compressor[RECOMP Compressor]
-        Compressor --> RateLimit["Rate Limiter (InMemory)"]
+        Compressor --> RateLimit["Rate Limiter (Synchronous)"]
         RateLimit --> LLM["LLM (Native OpenAI)"]
         Hub["LangSmith Hub"] -. Fetch Prompt .-> LLM
     end
@@ -94,6 +96,29 @@ graph TD
     LLM --> Answer[Output Answer]
     LLM -. Tracing .-> LangSmith[LangSmith Monitoring]
 ```
+
+## Interactive QA Mode
+
+The project features a live command-line interface for real-time interaction with the RAG system. This is the primary way to test the system manually.
+
+### Running Live QA
+```bash
+uv run interact.py
+```
+
+### Advanced Interactive Options
+- **Enable Live Evaluation**: Run Ragas metrics (`Faithfulness`, `Answer Relevancy`) for every query.
+  ```bash
+  uv run interact.py --eval
+  ```
+- **Disable Compression**: Run without the RECOMP step.
+  ```bash
+  uv run interact.py --no-compress
+  ```
+- **Override Top-K**:
+  ```bash
+  uv run interact.py --top-k 15
+  ```
 
 ## Evaluation Framework
 
@@ -112,18 +137,26 @@ The project includes a robust evaluation module to measure both search and gener
 ### Running Evaluation
 To run a full evaluation on the `rag_questions.json` dataset:
 ```bash
-python evaluation/evaluate.py
+uv run evaluation/evaluate.py
 ```
 
 ### Evaluation Artifacts
 - **Detailed Dataset**: `data/rag_dataset/rag_dataset.csv` — Inspect every query, context, and generated answer.
 - **Summary Report**: `results/evaluation_results_[timestamp].json` — Quantitative summary of all scores.
 
-Each stage is tracked as a **named Inngest step**, visible individually in the Inngest dashboard.
+## Usage Summary
+
+| Command | Purpose |
+|---|---|
+| `uv run interact.py` | Start the live, interactive RAG chat loop. |
+| `uv run interact.py --eval` | Start live chat with real-time Ragas evaluation. |
+| `uv run evaluation/evaluate.py`| Run the full evaluation suite against the test dataset. |
+| `uv run uvicorn main_jsonl_chat:app` | Start the FastAPI server for Inngest-based processing. |
 
 ## Project Structure
 
 ```
+├── interact.py                 # Live Interactive CLI (Main Entry Point)
 ├── main_jsonl_chat.py          # FastAPI + Inngest functions (ingest & query)
 ├── evaluation/
 │   ├── evaluate.py             # Main evaluation entry point (LangSmith integrated)
@@ -134,9 +167,9 @@ Each stage is tracked as a **named Inngest step**, visible individually in the I
 │   ├── generation.py           # LLM Handlers with Rate Limiting & Retries
 │   ├── compressor.py           # RECOMP context compression (@traceable)
 │   ├── prompts/
-│   │   └── system_prompt.txt   # Local fallback prompt template
+│   │   └── system_prompt.json  # Local fallback prompt template
 │   ├── retrievers.py           # Dense, Sparse, and Hybrid Retrievers
-│   ├── faiss_storage.py        # persistent vector store
+│   ├── faiss_storage.py        # Persistent vector store
 │   └── custom_types.py         # Pydantic models
 ├── data/
 │   └── queries/                # Evaluation and test question sets
@@ -150,8 +183,7 @@ Each stage is tracked as a **named Inngest step**, visible individually in the I
 ### 1. Install Dependencies
 
 ```bash
-pip install -e .
-# or with uv:
+# Recommended with uv:
 uv sync
 ```
 
@@ -169,14 +201,20 @@ LANGSMITH_TRACING=true
 LANGSMITH_PROJECT=archival-rag-evaluation
 ```
 
-### 3. Run the Server
+### 3. Run the System
 
-**Terminal 1** — FastAPI server:
+**Option A: Interactive (Recommended for testing)**
+```bash
+uv run interact.py
+```
+
+**Option B: Server-based (For large ingestions)**
+Terminal 1 — FastAPI server:
 ```bash
 uv run uvicorn main_jsonl_chat:app
 ```
 
-**Terminal 2** — Inngest dev server:
+Terminal 2 — Inngest dev server:
 ```bash
 npx inngest-cli@latest dev -u http://127.0.0.1:8000/api/inngest --no-discovery
 ```
