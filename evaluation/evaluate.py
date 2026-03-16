@@ -104,7 +104,7 @@ class RAGEvaluator:
         return results
 
     # @traceable(run_type="chain")
-    def evaluate_generation_with_ragas(self, dataset: List[QAPair], top_k: int = 5, retriever_type: str = "hybrid", 
+    def evaluate_generation_with_ragas(self, dataset: List[QAPair], top_k: int = 5, retriever_type: str = "dense", 
                                       use_recomp: bool = False, recomp_mode: str = "extractive",
                                       llm_model: str = None) -> Dict[str, Any]:
 
@@ -144,7 +144,7 @@ class RAGEvaluator:
             client=openai_client,
         )
         ragas_embeddings = RagasHFEmbeddings(model="BAAI/bge-small-en-v1.5")
-        # Monkey-patch missing Langchain-style methods that Ragas metrics expect
+        # patch the missing methods for ragas, No embed_query method in HFEmbeddings
         if not hasattr(ragas_embeddings, "embed_query"):
             ragas_embeddings.embed_query = ragas_embeddings.embed_text
         if not hasattr(ragas_embeddings, "embed_documents"):
@@ -156,7 +156,9 @@ class RAGEvaluator:
             "hybrid": self.hybrid
         }
         
-        retriever = retriever_map.get(retriever_type, self.dense)
+        retriever = retriever_map.get(retriever_type)
+        if not retriever:
+            raise ValueError(f"Retriever type {retriever_type} not found.")
         
         # Prepare lists for Ragas dataset
         queries = []
@@ -206,11 +208,11 @@ class RAGEvaluator:
 
         ragas_dataset = Dataset.from_dict(data)
         # Save the dataset to disk
-        os.makedirs("data/rag_dataset", exist_ok=True)
-        ragas_dataset.save_to_disk("data/rag_dataset")
+        os.makedirs("data/ragas_dataset", exist_ok=True)
+        ragas_dataset.save_to_disk("data/ragas_dataset")
         # Save as CSV for easier inspection
-        ragas_dataset.to_csv("data/rag_dataset/rag_dataset.csv")
-        print("Saved Ragas evaluation dataset to data/rag_dataset/rag_dataset.csv")
+        ragas_dataset.to_csv("data/ragas_dataset/ragas_dataset.csv")
+        print("Saved Ragas evaluation dataset to data/ragas_dataset/ragas_dataset.csv")
 
 
         
@@ -243,6 +245,8 @@ if __name__ == "__main__":
     parser.add_argument("--top-k", type=int, help="Top K retrieval (overrides config)")
     parser.add_argument("--llm-model", type=str, help="LLM model (overrides config)")
     parser.add_argument("--temperature", type=float, help="LLM temperature (overrides config)")
+    parser.add_argument("--retriever-type", type=str, choices=["dense", "sparse", "hybrid"], help="Default retriever for generation evaluation (overrides config)")
+    parser.add_argument("--output-dir", type=str, help="Output directory for results (overrides config)")
     args = parser.parse_args()
 
     # Load config from src/config.py
@@ -254,6 +258,8 @@ if __name__ == "__main__":
     top_k = args.top_k or config_dict.get("retrieval", {}).get("top_k", 5)
     llm_model = args.llm_model or config_dict.get("generation", {}).get("llm_model")
     temperature = args.temperature if args.temperature is not None else config_dict.get("generation", {}).get("temperature", 0.1)
+    retriever_type = args.retriever_type or config_dict.get("retrieval", {}).get("retriever_type", "hybrid")
+    output_dir = args.output_dir or config_dict.get("evaluation", {}).get("output_dir", "results")
 
     # Load questions from the JSON file
     # @tracker.track_step("Load Evaluation Dataset")
@@ -308,7 +314,6 @@ if __name__ == "__main__":
     else:
         print(f"\n1. Evaluating Retrievers (top_k={top_k})...")
         
-        # @tracker.track_step("Evaluate Retrievers")
         def run_retriever_eval():
             return evaluator.evaluate_retrievers(eval_data, top_k=top_k)
             
@@ -323,13 +328,13 @@ if __name__ == "__main__":
         print("\n2. Evaluating Generation (Requires OpenAI API Key and Cost)...")
         # To avoid unexpected costs during a dummy run, we check for API key
         if os.getenv("OPENROUTER_API_KEY"):
-            retriever_type = "hybrid" # default retriever
+            # Use the configured retriever_type
             
-            # @tracker.track_step("Ragas Evaluation")
             def run_ragas_eval():
                 return evaluator.evaluate_generation_with_ragas(
                     eval_data, 
                     top_k=top_k, 
+                    retriever_type=retriever_type,
                     use_recomp=(compressor_mode != "none"), 
                     recomp_mode=compressor_mode,
                     llm_model=llm_model
@@ -360,16 +365,16 @@ if __name__ == "__main__":
             all_results["generation_evaluation"] = {"status": "skipped", "reason": "No OPENROUTER_API_KEY"}
 
         # Export results to JSON
-        def export_results(res):
-            os.makedirs("results", exist_ok=True)
+        def export_results(res, out_dir):
+            os.makedirs(out_dir, exist_ok=True)
             timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-            export_path = f"results/evaluation_results_{timestamp_str}.json"
+            export_path = f"{out_dir}/evaluation_results_{timestamp_str}.json"
             
             with open(export_path, "w", encoding="utf-8") as f:
                 json.dump(res, f, indent=2, ensure_ascii=False)
             return export_path
             
-        export_path = export_results(all_results)
+        export_path = export_results(all_results, output_dir)
             
         print(f"\n--- Evaluation Complete ---")
         print(f"Results exported to: {export_path}")
