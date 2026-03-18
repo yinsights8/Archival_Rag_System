@@ -1,0 +1,5 @@
+{
+    "version": "1.0",
+    "mode": "extractive",
+    "template": "Analyze the following research question and archival documents. Select the most relevant sentences exactly as they appear in the original text that directly help answer the question. Do NOT summarize or rephrase. Output each extracted sentence on a new line.\n\nQUESTION: {query}\n\nARCHIVAL CONTEXT: {context}\n\nEXTRACTED SENTENCES:"
+}

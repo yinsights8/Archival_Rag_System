@@ -20,6 +20,7 @@ from tenacity import (
     retry_if_exception_type,
 )
 import openai
+import tiktoken
 
 from src import config
 
@@ -34,7 +35,7 @@ _gen_config = _config.get("generation", {})
 
 # OpenRouter setup
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_BASE_URL = "https://api.together.xyz/v1"
 
 # Default model for query generation
 DEFAULT_MODEL = _gen_config.get("llm_model")
@@ -79,16 +80,11 @@ class RAGGenerator:
         
         # Local fallback prompt template from external file
         if DEFAULT_PROMPT_PATH.exists():
-            try:
-                with open(DEFAULT_PROMPT_PATH, "r", encoding="utf-8") as f:
-                    prompt_data = json.load(f)
-                    self.local_prompt_template = prompt_data.get("template", "")
-            except Exception as e:
-                print(f"Error loading JSON prompt: {e}")
-                self.local_prompt_template = "Context: {context}\nQuestion: {question}"
+            with open(DEFAULT_PROMPT_PATH, "r", encoding="utf-8") as f:
+                prompt_data = json.load(f)
+                self.local_prompt_template = prompt_data.get("template", "")
         else:
             # Hardcoded emergency fallback if file is missing
-            self.local_prompt_template = "Context: {context}\nQuestion: {question}"
             print(f"Warning: Prompt file not found at {DEFAULT_PROMPT_PATH}. Using emergency fallback.")
 
         self.prompt_template = self._load_prompt()
@@ -134,11 +130,55 @@ class RAGGenerator:
         Returns:
             dict: The generated JSON response containing answer, confidence, reasoning, and ocr_issues_noted.
         """
-        # print(f"DEBUG: Number of input contexts: {len(contexts)}")
+        original_context = "\n\n---\n\n".join(contexts)
+        original_len = len(original_context)
+        
+        # Token counting (using cl100k_base for general OpenAI compatibility)
+        try:
+            encoding = tiktoken.get_encoding("cl100k_base")
+            original_tokens = len(encoding.encode(original_context))
+        except Exception:
+            original_tokens = 0
+
         if self.compressor:
             context_text = self.compressor.compress(question, contexts, top_n=self.compressor.top_n)
+            compressed_len = len(context_text)
+            
+            try:
+                compressed_tokens = len(encoding.encode(context_text))
+            except Exception:
+                compressed_tokens = 0
+                
+            reduction_chars = ((original_len - compressed_len) / original_len * 100) if original_len > 0 else 0
+            reduction_tokens = ((original_tokens - compressed_tokens) / original_tokens * 100) if original_tokens > 0 else 0
+            
+            print(f"[COMPRESSOR]: Compressed context to {compressed_len} chars ({compressed_tokens} tokens). "
+                  f"Reduction: {reduction_chars:.1f}% chars, {reduction_tokens:.1f}% tokens.")
+            
+            # Log metrics to LangSmith
+            run_tree = get_current_run_tree()
+            if run_tree:
+                run_tree.metadata.update({
+                    "original_context_len": original_len,
+                    "original_context_tokens": original_tokens,
+                    "compressed_context_len": compressed_len,
+                    "compressed_context_tokens": compressed_tokens,
+                    "context_reduction_pct": reduction_chars,
+                    "token_reduction_pct": reduction_tokens,
+                    "compression_mode": self.compressor.mode,
+                })
         else:
-            context_text = "\n\n---\n\n".join(contexts)
+            context_text = original_context
+            print(f"[NO COMPRESSOR]: Context length: {original_len} ({original_tokens} tokens)")
+            # Log metrics even without compressor
+            run_tree = get_current_run_tree()
+            if run_tree:
+                run_tree.metadata.update({
+                    "original_context_len": original_len,
+                    "original_context_tokens": original_tokens,
+                    "compressed_context_len": original_len,
+                    "compressed_context_tokens": original_tokens,
+                })
         
         if not context_text:
             print(f"Warning: Empty context for question: {question[:50]}...")
@@ -191,10 +231,10 @@ class RAGGenerator:
                     "total_tokens": getattr(usage, "total_tokens", 0),
                 }
                 # OpenRouter sometimes puts cost in a 'cost' attribute on usage or in a separate field
-                if hasattr(usage, "cost"):
-                   usage_data["cost"] = usage.cost
-                elif hasattr(response, "cost"):
-                   usage_data["cost"] = response.cost
+                if hasattr(usage, "Cost"):
+                   usage_data["Cost"] = usage.Cost
+                elif hasattr(response, "Cost"):
+                   usage_data["Cost"] = response.Cost
             
             # Explicitly log to LangSmith metadata if possible
             run_tree = get_current_run_tree()

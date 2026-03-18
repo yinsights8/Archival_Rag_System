@@ -1,0 +1,5 @@
+{
+    "version": "1.0",
+    "mode": "abstractive",
+    "template": "Based on the provided research question, summarize and extract the most relevant segments from the following archival context. Clean up any obvious OCR errors and ensure the output is concise, preserving key dates and historical names.\n\nQUESTION: {query}\n\nARCHIVAL CONTEXT: {context}\n\nRELEVANT SUMMARY:"
+}

@@ -1,1 +1,1 @@
-Question: {query} Context: {context}
+Question: {question} Context: {context}

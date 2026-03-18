@@ -7,7 +7,12 @@ from pathlib import Path
 import json
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
-DEFAULT_ABSTRACTIVE_PROMPT_PATH = PROMPTS_DIR / "recomp_prompt.json"
+comp_config = get_config()
+comp_config = comp_config.get("compression", {})
+if comp_config.get("mode") == "abstractive":
+    DEFAULT_COMPRESSOR_PROMPT_PATH = PROMPTS_DIR / "recomp_abstractive.json"
+else:
+    DEFAULT_COMPRESSOR_PROMPT_PATH = PROMPTS_DIR / "recomp_extractive.json"
 
 class RECOMPCompressor:
     """
@@ -31,9 +36,9 @@ class RECOMPCompressor:
         self.hub_handle = comp_config.get("hub_handle")
 
         # Local fallback prompt template
-        if DEFAULT_ABSTRACTIVE_PROMPT_PATH.exists():
+        if DEFAULT_COMPRESSOR_PROMPT_PATH.exists():
             try:
-                with open(DEFAULT_ABSTRACTIVE_PROMPT_PATH, "r", encoding="utf-8") as f:
+                with open(DEFAULT_COMPRESSOR_PROMPT_PATH, "r", encoding="utf-8") as f:
                     prompt_data = json.load(f)
                     self.local_prompt_template = prompt_data.get("template", "")
             except Exception as e:
@@ -41,7 +46,7 @@ class RECOMPCompressor:
                 self.local_prompt_template = "Question: {query} Context: {context}"
         else:
             self.local_prompt_template = "Question: {query} Context: {context}"
-            print(f"Warning: Compressor prompt file not found at {DEFAULT_ABSTRACTIVE_PROMPT_PATH}. Using emergency fallback.")
+            print(f"Warning: Compressor prompt file not found at {DEFAULT_COMPRESSOR_PROMPT_PATH}. Using emergency fallback.")
 
         self.prompt_template = self._load_prompt()
         
@@ -73,7 +78,7 @@ class RECOMPCompressor:
             return self._cached_hub_prompt
 
         try:
-            # We want a faster timeout here to avoid hanging the entire system
+            # faster timeout here to avoid hanging the entire system
             # if the LangSmith API is slow or unreachable.
             client = Client(timeout_ms=3000) 
             hub_prompt = client.pull_prompt(self.hub_handle)

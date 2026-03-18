@@ -16,7 +16,7 @@ from langchain_core.tracers import LangChainTracer
 load_dotenv()
 tracer = LangChainTracer(project_name=os.getenv("LANGSMITH_PROJECT"))
 
-@traceable(run_type="chain")
+@traceable
 def live_qa_session(query: str, retriever: DenseRetriever, generator: RAGGenerator, config_dict: dict, top_k: int = 10, evaluator_mode: bool = False):
     """Orchestrates the RAG flow for a single query."""
     print(f"\n[QUERY]: {query}")

@@ -8,7 +8,6 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# from visualization.tracker import tracker
 from evaluation.metrics import calculate_mrr, calculate_recall_at_k, calculate_ndcg
 from src.retrievers import DenseRetriever, SparseRetriever, HybridRetriever
 from src.faiss_storage import FaissStorage

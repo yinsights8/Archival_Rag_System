@@ -1,4 +1,0 @@
-{
-    "version": "1.0",
-    "template": "Question: {query} Context: {context}"
-}

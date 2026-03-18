@@ -2,28 +2,29 @@
 
 # Retrieval Settings
 retrieval:
-  top_k: 15
+  retriever_type: "dense" # options: dense, sparse, hybrid
+  top_k: 20
   embedding_model: "BAAI/bge-small-en-v1.5"
 
 # Generation Settings
 generation:
-  llm_model: "meta-llama/llama-3.1-70b-instruct" # "qwen/qwen3-next-80b-a3b-instruct:free" # "google/gemma-3-4b-it:free" #"meta-llama/llama-3.1-70b-instruct"
+  llm_model: 'mistralai/ministral-3-3b'  # "qwen/qwen3.5-9b" # e.g., "meta-llama-3.1-8b-instruct"
   temperature: 0.2
-  provider: "OpenRouter"
-  base_url: "https://openrouter.ai/api/v1"
-  hub_handle: "system_prompt" # LangSmith Hub handle from user screenshot
-  max_retries: 3
-  rpm_limit: 10 # Requests per minute (adjust based on your tier)
+  provider:  'LMStudio'  #"Together"  # LMStudio or "Ollama"
+  base_url: "http://localhost:1234/v1" # LM Studio default: http://localhost:1234/v1, Ollama default: http://localhost:11434/v1  Together: https://api.together.xyz/v1
+  max_retries: 2
+  hub_handle: "system_prompt"
+  rpm_limit: 5 # Requests per minute (adjust based on your tier)
 
 # Compression Settings
 compression:
-  mode: "abstractive" # options: none, extractive, abstractive
-  top_k: 15
-  hub_handle: "recomp_prompt" # Placeholder handle
+  mode: "extractive" # options: none, extractive, abstractive
+  top_k: 20
+  hub_handle: "recomp_prompt_ext" # recomp_prompt_abs/recomp_prompt_ext Placeholder handle  
   extractive_model: "fangyuan/nq_extractive_compressor"
   abstractive_model: "fangyuan/nq_abstractive_compressor"
 
 # Evaluation Settings
 evaluation:
   queries_file: "data/queries/rag_questions.json"
-  output_dir: "results"
+  output_dir: "results2"
